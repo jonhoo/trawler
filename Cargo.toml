@@ -1,0 +1,13 @@
+[package]
+name = "trawler"
+version = "0.1.0"
+authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
+
+[dependencies]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "trawler"
+path = "src/bin/main.rs"
