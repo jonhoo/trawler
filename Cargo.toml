@@ -3,7 +3,23 @@ name = "trawler"
 version = "0.1.0"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 
+[features]
+cli = ["clap", "tokio-core", "hyper", "url"]
+default = ["cli"]
+
 [dependencies]
+slog = "2.0.6"
+slog-term = "2.0.1"
+rayon = "1.0"
+libc = "0.2"
+rand = "0.4.0"
+zipf = "1.0.0"
+hdrhistogram = "6.0.0"
+
+clap = { version = "2.25.0", optional = true }
+tokio-core = { version = "0.1", optional = true }
+hyper = { version = "0.11", optional = true }
+url = { version = "1.7", optional = true }
 
 [lib]
 path = "src/lib.rs"
@@ -11,3 +27,4 @@ path = "src/lib.rs"
 [[bin]]
 name = "trawler"
 path = "src/bin/main.rs"
+required-features = ["cli"]
