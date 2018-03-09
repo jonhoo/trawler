@@ -119,7 +119,7 @@ impl<'a> WorkloadBuilder<'a> {
                     .map(|variant| {
                         (
                             variant,
-                            Histogram::<u64>::new_with_bounds(1, 100_000, 4).unwrap(),
+                            Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap(),
                         )
                     })
                     .collect();
@@ -127,7 +127,7 @@ impl<'a> WorkloadBuilder<'a> {
                     .map(|variant| {
                         (
                             variant,
-                            Histogram::<u64>::new_with_bounds(1, 100_000, 4).unwrap(),
+                            Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap(),
                         )
                     })
                     .collect();
@@ -239,7 +239,7 @@ impl<'a> WorkloadBuilder<'a> {
             }
         }
 
-        println!("# op\tmetric\tpct\tµs");
+        println!("# op\tmetric\tpct\tms");
         for (variant, h) in &*sjrn_t {
             for &pct in &[50, 95, 99] {
                 println!(
@@ -339,22 +339,22 @@ impl<'a> WorkloadBuilder<'a> {
                             let mut h = h.borrow_mut();
                             h.entry(variant)
                                 .or_insert_with(|| {
-                                    Histogram::<u64>::new_with_bounds(1, 100_000, 4).unwrap()
+                                    Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
                                 })
                                 .saturating_record(
-                                    remote_t.as_secs() * 1_000_000
-                                        + remote_t.subsec_nanos() as u64 / 1_000,
+                                    remote_t.as_secs() * 1_000
+                                        + remote_t.subsec_nanos() as u64 / 1_000_000,
                                 );
                         });
                         SJRN.with(|h| {
                             let mut h = h.borrow_mut();
                             h.entry(variant)
                                 .or_insert_with(|| {
-                                    Histogram::<u64>::new_with_bounds(1, 100_000, 4).unwrap()
+                                    Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
                                 })
                                 .saturating_record(
-                                    sjrn_t.as_secs() * 1_000_000
-                                        + sjrn_t.subsec_nanos() as u64 / 1_000,
+                                    sjrn_t.as_secs() * 1_000
+                                        + sjrn_t.subsec_nanos() as u64 / 1_000_000,
                                 );
                         });
                     }
