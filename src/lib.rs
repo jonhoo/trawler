@@ -11,17 +11,19 @@ pub use issuer::{Issuer, LobstersClient, LobstersRequest, Vote};
 
 use hdrhistogram::Histogram;
 use rand::Rng;
+use std::collections::HashMap;
 use std::fs;
 use std::time;
 use std::thread;
 use std::sync::{atomic, Arc, Barrier, Mutex};
 use std::cell::RefCell;
 use std::any::Any;
+use std::mem;
 
 thread_local! {
     static CLIENT: RefCell<Option<Box<Any>>> = RefCell::new(None);
-    static SJRN: RefCell<Histogram<u64>> = RefCell::new(Histogram::new_with_bounds(1, 100_000, 4).unwrap());
-    static RMT: RefCell<Histogram<u64>> = RefCell::new(Histogram::new_with_bounds(1, 100_000, 4).unwrap());
+    static SJRN: RefCell<HashMap<mem::Discriminant<LobstersRequest>, Histogram<u64>>> = RefCell::default();
+    static RMT: RefCell<HashMap<mem::Discriminant<LobstersRequest>, Histogram<u64>>> = RefCell::default();
 }
 
 pub struct WorkloadBuilder<'a> {
@@ -101,19 +103,36 @@ impl<'a> WorkloadBuilder<'a> {
 
         let nthreads = self.threads;
 
-        let hists = if let Some(mut f) = self.histogram_file.and_then(|h| fs::File::open(h).ok()) {
-            use hdrhistogram::serialization::Deserializer;
-            let mut deserializer = Deserializer::new();
-            (
-                deserializer.deserialize(&mut f).unwrap(),
-                deserializer.deserialize(&mut f).unwrap(),
-            )
-        } else {
-            (
-                Histogram::<u64>::new_with_bounds(1, 100_000, 4).unwrap(),
-                Histogram::<u64>::new_with_bounds(1, 100_000, 4).unwrap(),
-            )
-        };
+        let hists: (HashMap<_, _>, HashMap<_, _>) =
+            if let Some(mut f) = self.histogram_file.and_then(|h| fs::File::open(h).ok()) {
+                use hdrhistogram::serialization::Deserializer;
+                let mut deserializer = Deserializer::new();
+                let sjrn = LobstersRequest::all()
+                    .map(|variant| (variant, deserializer.deserialize(&mut f).unwrap()))
+                    .collect();
+                let rmt = LobstersRequest::all()
+                    .map(|variant| (variant, deserializer.deserialize(&mut f).unwrap()))
+                    .collect();
+                (sjrn, rmt)
+            } else {
+                let sjrn = LobstersRequest::all()
+                    .map(|variant| {
+                        (
+                            variant,
+                            Histogram::<u64>::new_with_bounds(1, 100_000, 4).unwrap(),
+                        )
+                    })
+                    .collect();
+                let rmt = LobstersRequest::all()
+                    .map(|variant| {
+                        (
+                            variant,
+                            Histogram::<u64>::new_with_bounds(1, 100_000, 4).unwrap(),
+                        )
+                    })
+                    .collect();
+                (sjrn, rmt)
+            };
 
         let sjrn_t = Arc::new(Mutex::new(hists.0));
         let rmt_t = Arc::new(Mutex::new(hists.1));
@@ -129,10 +148,8 @@ impl<'a> WorkloadBuilder<'a> {
         // we work around this by forcing a box of `issuer` and erasing its lifetime (by setting it
         // to 'static). again this is *only* safe because we wait for the threadpool.
         let issuer = Box::new(issuer) as Box<Issuer<Instance = I::Instance> + Send>;
-        let issuer: Box<Issuer<Instance = I::Instance> + Send + 'static> = unsafe {
-            use std::mem;
-            mem::transmute(issuer)
-        };
+        let issuer: Box<Issuer<Instance = I::Instance> + Send + 'static> =
+            unsafe { mem::transmute(issuer) };
         let issuer = Arc::new(Mutex::new(issuer));
 
         let pool = rayon::ThreadPoolBuilder::new()
@@ -144,10 +161,28 @@ impl<'a> WorkloadBuilder<'a> {
                 })
             })
             .exit_handler(move |_| {
-                SJRN.with(|h| ts.0.lock().unwrap().add(&*h.borrow()))
-                    .unwrap();
-                RMT.with(|h| ts.1.lock().unwrap().add(&*h.borrow()))
-                    .unwrap();
+                SJRN.with(|sjrn| {
+                    let mut sjrn_master = ts.0.lock().unwrap();
+                    let sjrn = sjrn.borrow();
+                    for (variant, h) in &*sjrn {
+                        sjrn_master
+                            .get_mut(variant)
+                            .expect("missing master entry for variant")
+                            .add(h)
+                            .unwrap();
+                    }
+                });
+                RMT.with(|rmt| {
+                    let mut rmt_master = ts.1.lock().unwrap();
+                    let rmt = rmt.borrow();
+                    for (variant, h) in &*rmt {
+                        rmt_master
+                            .get_mut(variant)
+                            .expect("missing master entry for variant")
+                            .add(h)
+                            .unwrap();
+                    }
+                });
                 ts.2.wait();
             })
             .build()
@@ -181,7 +216,6 @@ impl<'a> WorkloadBuilder<'a> {
             "# actual ops/s: {:.2}",
             ops as f64 / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
         );
-        println!("# op\tpct\tsojourn\tremote");
 
         let sjrn_t = sjrn_t.lock().unwrap();
         let rmt_t = rmt_t.lock().unwrap();
@@ -192,8 +226,12 @@ impl<'a> WorkloadBuilder<'a> {
                     use hdrhistogram::serialization::Serializer;
                     use hdrhistogram::serialization::V2Serializer;
                     let mut s = V2Serializer::new();
-                    s.serialize(&sjrn_t, &mut f).unwrap();
-                    s.serialize(&rmt_t, &mut f).unwrap();
+                    for variant in LobstersRequest::all() {
+                        s.serialize(&sjrn_t[&variant], &mut f).unwrap();
+                    }
+                    for variant in LobstersRequest::all() {
+                        s.serialize(&rmt_t[&variant], &mut f).unwrap();
+                    }
                 }
                 Err(e) => {
                     eprintln!("failed to open histogram file for writing: {:?}", e);
@@ -201,22 +239,29 @@ impl<'a> WorkloadBuilder<'a> {
             }
         }
 
-        println!(
-            "50\t{:.2}\t{:.2}\t(all µs)",
-            sjrn_t.value_at_quantile(0.5),
-            rmt_t.value_at_quantile(0.5)
-        );
-        println!(
-            "95\t{:.2}\t{:.2}\t(all µs)",
-            sjrn_t.value_at_quantile(0.95),
-            rmt_t.value_at_quantile(0.95)
-        );
-        println!(
-            "99\t{:.2}\t{:.2}\t(all µs)",
-            sjrn_t.value_at_quantile(0.99),
-            rmt_t.value_at_quantile(0.99)
-        );
-        println!("100\t{:.2}\t{:.2}\t(all µs)", sjrn_t.max(), rmt_t.max());
+        println!("# op\tmetric\tpct\tµs");
+        for (variant, h) in &*sjrn_t {
+            for &pct in &[50, 95, 99] {
+                println!(
+                    "{:?}\tsojourn\t{}\t{:.2}",
+                    variant,
+                    pct,
+                    h.value_at_quantile(pct as f64 / 100.0),
+                );
+            }
+            println!("{:?}\tsojourn\t100\t{:.2}", variant, h.max());
+        }
+        for (variant, h) in &*rmt_t {
+            for &pct in &[50, 95, 99] {
+                println!(
+                    "{:?}\tprocessing\t{}\t{:.2}",
+                    variant,
+                    pct,
+                    h.value_at_quantile(pct as f64 / 100.0),
+                );
+            }
+            println!("{:?}\tprocessing\t100\t{:.2}", variant, h.max());
+        }
     }
 
     fn run_generator<C>(self, pool: Arc<rayon::ThreadPool>, target: f64) -> usize
@@ -272,6 +317,7 @@ impl<'a> WorkloadBuilder<'a> {
                 }
             };
 
+            let variant = mem::discriminant(&req);
             let issued = next;
             pool.spawn(move || {
                 CLIENT.with(|c| {
@@ -290,15 +336,26 @@ impl<'a> WorkloadBuilder<'a> {
                         let sjrn_t = done.duration_since(issued);
 
                         RMT.with(|h| {
-                            h.borrow_mut().saturating_record(
-                                remote_t.as_secs() * 1_000_000
-                                    + remote_t.subsec_nanos() as u64 / 1_000,
-                            );
+                            let mut h = h.borrow_mut();
+                            h.entry(variant)
+                                .or_insert_with(|| {
+                                    Histogram::<u64>::new_with_bounds(1, 100_000, 4).unwrap()
+                                })
+                                .saturating_record(
+                                    remote_t.as_secs() * 1_000_000
+                                        + remote_t.subsec_nanos() as u64 / 1_000,
+                                );
                         });
                         SJRN.with(|h| {
-                            h.borrow_mut().saturating_record(
-                                sjrn_t.as_secs() * 1_000_000 + sjrn_t.subsec_nanos() as u64 / 1_000,
-                            );
+                            let mut h = h.borrow_mut();
+                            h.entry(variant)
+                                .or_insert_with(|| {
+                                    Histogram::<u64>::new_with_bounds(1, 100_000, 4).unwrap()
+                                })
+                                .saturating_record(
+                                    sjrn_t.as_secs() * 1_000_000
+                                        + sjrn_t.subsec_nanos() as u64 / 1_000,
+                                );
                         });
                     }
                 });

@@ -35,6 +35,32 @@ pub enum LobstersRequest {
     },
 }
 
+use std::mem;
+use std::vec;
+impl LobstersRequest {
+    pub(crate) fn all() -> vec::IntoIter<mem::Discriminant<Self>> {
+        vec![
+            mem::discriminant(&LobstersRequest::Frontpage),
+            mem::discriminant(&LobstersRequest::Story(0)),
+            mem::discriminant(&LobstersRequest::Login(0)),
+            mem::discriminant(&LobstersRequest::Logout(0)),
+            mem::discriminant(&LobstersRequest::StoryVote(0, 0, Vote::Up)),
+            mem::discriminant(&LobstersRequest::CommentVote(0, 0, Vote::Up)),
+            mem::discriminant(&LobstersRequest::Submit {
+                id: 0,
+                user: 0,
+                title: String::new(),
+            }),
+            mem::discriminant(&LobstersRequest::Comment {
+                id: 0,
+                user: 0,
+                story: 0,
+                parent: None,
+            }),
+        ].into_iter()
+    }
+}
+
 pub trait LobstersClient {
     fn handle(&mut self, LobstersRequest);
 }
