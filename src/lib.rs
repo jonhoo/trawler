@@ -20,10 +20,49 @@ use std::cell::RefCell;
 use std::any::Any;
 use std::mem;
 
+const BASE_OPS_PER_SEC: usize = 10;
+
+// at time of writing, https://lobste.rs/recent/page/1601 is last page
+const BASE_STORIES: u32 = 25 * 1601;
+
+// wild guess
+const BASE_COMMENTS: u32 = BASE_STORIES * 10;
+
+// document.querySelectorAll(".user_tree > li").length on https://lobste.rs/u
+const BASE_USERS: u32 = 9000;
+
 thread_local! {
     static CLIENT: RefCell<Option<Box<Any>>> = RefCell::new(None);
     static SJRN: RefCell<HashMap<mem::Discriminant<LobstersRequest>, Histogram<u64>>> = RefCell::default();
     static RMT: RefCell<HashMap<mem::Discriminant<LobstersRequest>, Histogram<u64>>> = RefCell::default();
+}
+
+#[inline]
+fn id_to_slug(mut id: u32) -> [u8; 6] {
+    // convert id to unique string
+    // 26 possible characters (a-z0-9)
+    let mut slug = [0; 6];
+    let mut digit: u8;
+    digit = (id % 26) as u8;
+    slug[5] = digit + if digit < 10 { b'0' } else { b'a' - 10 };
+    id /= 26;
+    digit = (id % 26) as u8;
+    slug[4] = digit + if digit < 10 { b'0' } else { b'a' - 10 };
+    id /= 26;
+    digit = (id % 26) as u8;
+    slug[3] = digit + if digit < 10 { b'0' } else { b'a' - 10 };
+    id /= 26;
+    digit = (id % 26) as u8;
+    slug[2] = digit + if digit < 10 { b'0' } else { b'a' - 10 };
+    id /= 26;
+    digit = (id % 26) as u8;
+    slug[1] = digit + if digit < 10 { b'0' } else { b'a' - 10 };
+    id /= 26;
+    digit = (id % 26) as u8;
+    slug[0] = digit + if digit < 10 { b'0' } else { b'a' - 10 };
+    id /= 26;
+    debug_assert_eq!(id, 0);
+    slug
 }
 
 pub struct WorkloadBuilder<'a> {
@@ -96,7 +135,7 @@ impl<'a> WorkloadBuilder<'a> {
         // generating a request takes a while because we have to generate random numbers (including
         // zipfs). so, depending on the target load, we may need more than one load generation
         // thread. we'll make them all share the pool of issuers though.
-        let mut target = 10 as f64 * self.scale;
+        let mut target = BASE_OPS_PER_SEC as f64 * self.scale;
         let per_generator = 10;
         let ngen = (target as usize + per_generator - 1) / per_generator; // rounded up
         target /= ngen as f64;
@@ -288,31 +327,50 @@ impl<'a> WorkloadBuilder<'a> {
             }
 
             // randomly pick next request type based on relative frequency
-            // TODO: pick ids sensibly
+            // TODO: id distributions
             let seed = rng.gen_range(0, 100);
             let req = if seed < 30 {
                 LobstersRequest::Frontpage
             } else if seed < 80 {
-                LobstersRequest::Story(0)
+                LobstersRequest::Story(id_to_slug(rng.gen_range(0, BASE_STORIES)))
             } else if seed < 81 {
-                LobstersRequest::Login(0)
+                LobstersRequest::Login(rng.gen_range(0, BASE_USERS))
             } else if seed < 82 {
-                LobstersRequest::Logout(0)
+                LobstersRequest::Logout(rng.gen_range(0, BASE_USERS))
             } else if seed < 90 {
-                LobstersRequest::StoryVote(0, 0, Vote::Up)
+                LobstersRequest::StoryVote(
+                    rng.gen_range(0, BASE_USERS),
+                    id_to_slug(rng.gen_range(0, BASE_STORIES)),
+                    if rng.gen_weighted_bool(2) {
+                        Vote::Up
+                    } else {
+                        Vote::Down
+                    },
+                )
             } else if seed < 95 {
-                LobstersRequest::CommentVote(0, 0, Vote::Up)
+                LobstersRequest::CommentVote(
+                    rng.gen_range(0, BASE_USERS),
+                    id_to_slug(rng.gen_range(0, BASE_COMMENTS)),
+                    if rng.gen_weighted_bool(2) {
+                        Vote::Up
+                    } else {
+                        Vote::Down
+                    },
+                )
             } else if seed < 97 {
+                // TODO: how do we pick a unique ID here?
                 LobstersRequest::Submit {
-                    id: 0,
-                    user: 0,
+                    id: [0; 6],
+                    user: rng.gen_range(0, BASE_USERS),
                     title: String::new(),
                 }
             } else {
+                // TODO: how do we pick a unique ID here?
+                // TODO: sometimes pick a parent comment
                 LobstersRequest::Comment {
-                    id: 0,
-                    user: 0,
-                    story: 0,
+                    id: id_to_slug(0),
+                    user: rng.gen_range(0, BASE_USERS),
+                    story: id_to_slug(rng.gen_range(0, BASE_STORIES)),
                     parent: None,
                 }
             };
