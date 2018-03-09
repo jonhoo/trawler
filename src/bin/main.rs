@@ -214,11 +214,6 @@ impl trawler::LobstersClient for WebClient {
                     .set(hyper::header::ContentType::form_url_encoded());
                 req
             }
-            req => {
-                println!("{:?}", req);
-                return;
-                //unimplemented!();
-            }
         };
 
         if let Some(uid) = uid {
