@@ -228,6 +228,72 @@ impl<'a> WorkloadBuilder<'a> {
             .map(Arc::new)
             .unwrap();
 
+        // TODO: detect if already primed!
+        if true {
+            use rayon::iter::IntoParallelIterator;
+            use rayon::iter::ParallelIterator;
+
+            pool.install(|| {
+                // first, we need to prime the database with BASE_STORIES stories!
+                (0..BASE_STORIES).into_par_iter().for_each(|id| {
+                    CLIENT.with(|c| {
+                        // force to C so we get specialization
+                        // see https://stackoverflow.com/a/33687996/472927
+                        let mut issuer = c.borrow_mut();
+                        let issuer = issuer.as_mut().unwrap();
+                        let issuer = issuer.downcast_mut::<I::Instance>().unwrap();
+
+                        // TODO: distribution
+                        let user = rand::thread_rng().gen_range(0, BASE_USERS);
+                        issuer.handle(LobstersRequest::Submit {
+                            id: id_to_slug(id),
+                            user: user,
+                            title: format!("Base article {}", id),
+                        });
+                    })
+                });
+            });
+
+            pool.install(|| {
+                // and as many comments
+                (0..BASE_COMMENTS).into_par_iter().for_each(|id| {
+                    CLIENT.with(|c| {
+                        // force to C so we get specialization
+                        // see https://stackoverflow.com/a/33687996/472927
+                        let mut issuer = c.borrow_mut();
+                        let issuer = issuer.as_mut().unwrap();
+                        let issuer = issuer.downcast_mut::<I::Instance>().unwrap();
+
+                        let mut rng = rand::thread_rng();
+                        let user = rng.gen_range(0, BASE_USERS); // TODO: distribution
+                        let story = id % BASE_STORIES; // TODO: distribution
+                        let parent = if rng.gen_weighted_bool(2) {
+                            // we need to pick a parent in the same story
+                            let last_safe_comment_id = id.saturating_sub(nthreads as u32);
+                            // how many stories to we know there are per story?
+                            let safe_comments_per_story = last_safe_comment_id / BASE_STORIES;
+                            // pick the nth comment to chosen story
+                            if safe_comments_per_story != 0 {
+                                let story_comment = rng.gen_range(0, safe_comments_per_story);
+                                Some(story + BASE_STORIES * story_comment)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                        issuer.handle(LobstersRequest::Comment {
+                            id: id_to_slug(id),
+                            story: id_to_slug(story),
+                            user: user,
+                            parent: parent.map(id_to_slug),
+                        });
+                    })
+                });
+            });
+        }
+
         let start = time::Instant::now();
         let generators: Vec<_> = (0..ngen)
             .map(|geni| {
@@ -361,16 +427,18 @@ impl<'a> WorkloadBuilder<'a> {
                 )
             } else if seed < 97 {
                 // TODO: how do we pick a unique ID here?
+                let id = rng.gen_range(BASE_STORIES, BASE_STORIES + u16::max_value() as u32);
                 LobstersRequest::Submit {
-                    id: [0; 6],
+                    id: id_to_slug(id),
                     user: rng.gen_range(0, BASE_USERS),
-                    title: String::new(),
+                    title: format!("benchmark {}", id),
                 }
             } else {
                 // TODO: how do we pick a unique ID here?
+                let id = rng.gen_range(BASE_COMMENTS, BASE_COMMENTS + u16::max_value() as u32);
                 // TODO: sometimes pick a parent comment
                 LobstersRequest::Comment {
-                    id: id_to_slug(0),
+                    id: id_to_slug(id),
                     user: rng.gen_range(0, BASE_USERS),
                     story: id_to_slug(rng.gen_range(0, BASE_STORIES)),
                     parent: None,
