@@ -17,6 +17,7 @@ pub enum Vote {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum LobstersRequest {
     Frontpage,
+    Recent,
     Story(StoryId),
     Login(UserId),
     Logout(UserId),
@@ -41,6 +42,7 @@ impl LobstersRequest {
     pub(crate) fn all() -> vec::IntoIter<mem::Discriminant<Self>> {
         vec![
             mem::discriminant(&LobstersRequest::Frontpage),
+            mem::discriminant(&LobstersRequest::Recent),
             mem::discriminant(&LobstersRequest::Story([0; 6])),
             mem::discriminant(&LobstersRequest::Login(0)),
             mem::discriminant(&LobstersRequest::Logout(0)),

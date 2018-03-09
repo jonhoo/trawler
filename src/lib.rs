@@ -331,6 +331,8 @@ impl<'a> WorkloadBuilder<'a> {
             let seed = rng.gen_range(0, 100);
             let req = if seed < 30 {
                 LobstersRequest::Frontpage
+            } else if seed < 40 {
+                LobstersRequest::Recent
             } else if seed < 80 {
                 LobstersRequest::Story(id_to_slug(rng.gen_range(0, BASE_STORIES)))
             } else if seed < 81 {
