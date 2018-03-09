@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 
 [features]
-cli = ["clap", "tokio-core", "hyper", "url"]
+cli = ["clap", "tokio-core", "hyper", "url", "futures", "regex"]
 default = ["cli"]
 
 [dependencies]
@@ -18,8 +18,13 @@ hdrhistogram = "6.0.0"
 
 clap = { version = "2.25.0", optional = true }
 tokio-core = { version = "0.1", optional = true }
+futures = { version = "0.1", optional = true }
 hyper = { version = "0.11", optional = true }
 url = { version = "1.7", optional = true }
+regex = { version = "0.2", optional = true }
+
+[profile.release]
+debug = true
 
 [lib]
 path = "src/lib.rs"
