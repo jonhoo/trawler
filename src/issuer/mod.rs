@@ -1,7 +1,14 @@
-pub trait Issuer {
-    type Instance: LobstersClient;
+use futures;
+use tokio_core;
+use std::time;
+use std::rc::Rc;
 
-    fn spawn(&mut self) -> Self::Instance;
+pub trait LobstersClient {
+    type Factory;
+
+    fn spawn(&mut Self::Factory, &tokio_core::reactor::Handle) -> Self;
+    fn handle(Rc<Self>, LobstersRequest)
+        -> Box<futures::Future<Item = time::Duration, Error = ()>>;
 }
 
 pub type StoryId = [u8; 6];
@@ -61,8 +68,38 @@ impl LobstersRequest {
             }),
         ].into_iter()
     }
-}
 
-pub trait LobstersClient {
-    fn handle(&mut self, LobstersRequest);
+    pub fn variant_name(v: &mem::Discriminant<Self>) -> &'static str {
+        match *v {
+            d if d == mem::discriminant(&LobstersRequest::Frontpage) => "Frontpage",
+            d if d == mem::discriminant(&LobstersRequest::Recent) => "Recent",
+            d if d == mem::discriminant(&LobstersRequest::Story([0; 6])) => "Story",
+            d if d == mem::discriminant(&LobstersRequest::Login(0)) => "Login",
+            d if d == mem::discriminant(&LobstersRequest::Logout(0)) => "Logout",
+            d if d == mem::discriminant(&LobstersRequest::StoryVote(0, [0; 6], Vote::Up)) => {
+                "StoryVote"
+            }
+            d if d == mem::discriminant(&LobstersRequest::CommentVote(0, [0; 6], Vote::Up)) => {
+                "CommentVote"
+            }
+            d if d == mem::discriminant(&LobstersRequest::Submit {
+                id: [0; 6],
+                user: 0,
+                title: String::new(),
+            }) =>
+            {
+                "Submit"
+            }
+            d if d == mem::discriminant(&LobstersRequest::Comment {
+                id: [0; 6],
+                user: 0,
+                story: [0; 6],
+                parent: None,
+            }) =>
+            {
+                "Comment"
+            }
+            _ => unreachable!(),
+        }
+    }
 }

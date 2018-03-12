@@ -8,11 +8,14 @@ extern crate trawler;
 extern crate url;
 
 use clap::{App, Arg};
+use futures::Future;
+use trawler::{LobstersRequest, Vote};
+
 use std::time;
 use std::collections::HashMap;
-use futures::stream::Stream;
 use std::str::FromStr;
-use trawler::{LobstersRequest, Vote};
+use std::rc::Rc;
+use std::cell::RefCell;
 
 struct WebClientSpawner {
     prefix: url::Url,
@@ -24,108 +27,112 @@ impl WebClientSpawner {
         }
     }
 }
-impl trawler::Issuer for WebClientSpawner {
-    type Instance = WebClient;
-
-    fn spawn(&mut self) -> Self::Instance {
-        WebClient::new(&self.prefix)
-    }
-}
 
 struct WebClient {
     prefix: url::Url,
-    core: tokio_core::reactor::Core,
     client: hyper::Client<hyper::client::HttpConnector>,
-    cookies: HashMap<u32, hyper::header::Cookie>,
+    cookies: RefCell<HashMap<u32, hyper::header::Cookie>>,
 }
 impl WebClient {
-    fn new(prefix: &url::Url) -> Self {
-        let core = tokio_core::reactor::Core::new().unwrap();
-        let client = hyper::Client::new(&core.handle());
+    fn new(handle: &tokio_core::reactor::Handle, prefix: &url::Url) -> Self {
+        let client = hyper::Client::new(handle);
         WebClient {
             prefix: prefix.clone(),
-            core: core,
             client: client,
             cookies: Default::default(),
         }
     }
 
-    fn get_cookie_for(&mut self, uid: u32) -> hyper::header::Cookie {
-        let prefix = &self.prefix;
-        let client = &mut self.client;
-        let core = &mut self.core;
-        self.cookies
-            .entry(uid)
-            .or_insert_with(|| {
-                use hyper::header::{Cookie, Header, Raw, SetCookie};
+    fn get_cookie_for(
+        this: Rc<Self>,
+        uid: u32,
+    ) -> Box<futures::Future<Item = hyper::header::Cookie, Error = hyper::Error>> {
+        {
+            let cookies = this.cookies.borrow();
+            if let Some(cookie) = cookies.get(&uid) {
+                return Box::new(futures::finished(cookie.clone()));
+            }
+        }
 
-                let url = hyper::Uri::from_str(prefix.join("login").unwrap().as_ref()).unwrap();
-                let mut req = hyper::Request::new(hyper::Method::Post, url);
-                let mut s = url::form_urlencoded::Serializer::new(String::new());
-                s.append_pair("utf8", "✓");
-                s.append_pair("email", &format!("user{}", uid));
-                //s.append_pair("email", "test");
-                s.append_pair("password", "test");
-                s.append_pair("commit", "Login");
-                s.append_pair("referer", prefix.as_ref());
-                req.set_body(s.finish());
-                req.headers_mut()
-                    .set(hyper::header::ContentType::form_url_encoded());
-                let res = core.run(client.request(req)).unwrap();
+        use hyper::header::{Cookie, Header, Raw, SetCookie};
 
-                if res.status() != hyper::StatusCode::Found {
-                    panic!(
-                        "Failed to log in as user{}/test. Make sure to create all the test users!",
-                        uid
-                    );
-                }
+        let url = hyper::Uri::from_str(this.prefix.join("login").unwrap().as_ref()).unwrap();
+        let mut req = hyper::Request::new(hyper::Method::Post, url);
+        let mut s = url::form_urlencoded::Serializer::new(String::new());
+        s.append_pair("utf8", "✓");
+        s.append_pair("email", &format!("user{}", uid));
+        //s.append_pair("email", "test");
+        s.append_pair("password", "test");
+        s.append_pair("commit", "Login");
+        s.append_pair("referer", this.prefix.as_ref());
+        req.set_body(s.finish());
+        req.headers_mut()
+            .set(hyper::header::ContentType::form_url_encoded());
 
-                let mut cookie = Cookie::new();
-                if let Some(&SetCookie(ref content)) = res.headers().get() {
-                    for c in content {
-                        let c = Cookie::parse_header(&Raw::from(&**c)).unwrap();
-                        for (k, v) in c.iter() {
-                            cookie.append(k.to_string(), v.to_string());
-                        }
+        Box::new(this.client.request(req).map(move |res| {
+            if res.status() != hyper::StatusCode::Found {
+                panic!(
+                    "Failed to log in as user{}/test. Make sure to create all the test users!",
+                    uid
+                );
+            }
+
+            let mut cookie = Cookie::new();
+            if let Some(&SetCookie(ref content)) = res.headers().get() {
+                for c in content {
+                    let c = Cookie::parse_header(&Raw::from(&**c)).unwrap();
+                    for (k, v) in c.iter() {
+                        cookie.append(k.to_string(), v.to_string());
                     }
-
-                    cookie
-                } else {
-                    unreachable!()
                 }
-            })
-            .clone()
+            } else {
+                unreachable!()
+            }
+
+            this.cookies.borrow_mut().insert(uid, cookie.clone());
+            cookie
+        }))
     }
 }
 impl trawler::LobstersClient for WebClient {
-    fn handle(&mut self, req: trawler::LobstersRequest) {
+    type Factory = WebClientSpawner;
+
+    fn spawn(spawner: &mut Self::Factory, handle: &tokio_core::reactor::Handle) -> Self {
+        WebClient::new(handle, &spawner.prefix)
+    }
+
+    fn handle(
+        this: Rc<Self>,
+        req: trawler::LobstersRequest,
+    ) -> Box<futures::Future<Item = time::Duration, Error = ()>> {
         let mut uid = None;
+        let sent = time::Instant::now();
         let mut expected = hyper::StatusCode::Ok;
         let mut req = match req {
             LobstersRequest::Frontpage => {
-                let url = hyper::Uri::from_str(self.prefix.as_ref()).unwrap();
+                let url = hyper::Uri::from_str(this.prefix.as_ref()).unwrap();
                 hyper::Request::new(hyper::Method::Get, url)
             }
             LobstersRequest::Recent => {
                 let url =
-                    hyper::Uri::from_str(self.prefix.join("recent").unwrap().as_ref()).unwrap();
+                    hyper::Uri::from_str(this.prefix.join("recent").unwrap().as_ref()).unwrap();
                 hyper::Request::new(hyper::Method::Get, url)
             }
             LobstersRequest::Login(..) => {
                 // XXX: do we want to pick randomly between logged in users when making requests?
-                return;
+                return Box::new(futures::failed(()));
             }
             LobstersRequest::Logout(..) => {
                 /*
                 let url =
-                    hyper::Uri::from_str(self.prefix.join("logout").unwrap().as_ref()).unwrap();
+                    hyper::Uri::from_str(this.prefix.join("logout").unwrap().as_ref()).unwrap();
                 hyper::Request::new(hyper::Method::Post, url)
                 */
-                return;
+                return Box::new(futures::failed(()));
             }
             LobstersRequest::Story(id) => {
                 let url = hyper::Uri::from_str(
-                    self.prefix
+                    this.prefix
                         .join("s/")
                         .unwrap()
                         .join(::std::str::from_utf8(&id[..]).unwrap())
@@ -136,7 +143,7 @@ impl trawler::LobstersClient for WebClient {
             }
             LobstersRequest::StoryVote(user, story, v) => {
                 let url = hyper::Uri::from_str(
-                    self.prefix
+                    this.prefix
                         .join(&format!(
                             "stories/{}/{}",
                             ::std::str::from_utf8(&story[..]).unwrap(),
@@ -153,7 +160,7 @@ impl trawler::LobstersClient for WebClient {
             }
             LobstersRequest::CommentVote(user, comment, v) => {
                 let url = hyper::Uri::from_str(
-                    self.prefix
+                    this.prefix
                         .join(&format!(
                             "comments/{}/{}",
                             ::std::str::from_utf8(&comment[..]).unwrap(),
@@ -173,7 +180,7 @@ impl trawler::LobstersClient for WebClient {
                 expected = hyper::StatusCode::Found;
 
                 let url =
-                    hyper::Uri::from_str(self.prefix.join("stories").unwrap().as_ref()).unwrap();
+                    hyper::Uri::from_str(this.prefix.join("stories").unwrap().as_ref()).unwrap();
                 let mut req = hyper::Request::new(hyper::Method::Post, url);
                 let mut s = url::form_urlencoded::Serializer::new(String::new());
                 s.append_pair("commit", "Submit");
@@ -196,7 +203,7 @@ impl trawler::LobstersClient for WebClient {
                 uid = Some(user);
 
                 let url =
-                    hyper::Uri::from_str(self.prefix.join("comments").unwrap().as_ref()).unwrap();
+                    hyper::Uri::from_str(this.prefix.join("comments").unwrap().as_ref()).unwrap();
                 let mut req = hyper::Request::new(hyper::Method::Post, url);
                 let mut s = url::form_urlencoded::Serializer::new(String::new());
                 s.append_pair("short_id", ::std::str::from_utf8(&id[..]).unwrap());
@@ -216,17 +223,37 @@ impl trawler::LobstersClient for WebClient {
             }
         };
 
-        if let Some(uid) = uid {
-            req.headers_mut().set(self.get_cookie_for(uid));
+        let req = if let Some(uid) = uid {
+            futures::future::Either::A(WebClient::get_cookie_for(this.clone(), uid).map(
+                move |cookie| {
+                    req.headers_mut().set(cookie);
+                    req
+                },
+            ))
+        } else {
+            futures::future::Either::B(futures::finished(req))
         };
 
-        let res = self.core.run(self.client.request(req)).unwrap();
-        if res.status() != expected {
-            panic!(
-                "{:?} status response. You probably forgot to prime.",
-                res.status()
-            );
-        }
+        Box::new(req.and_then(move |req| {
+            this.client.request(req).and_then(move |res| {
+                if res.status() != expected {
+                    use futures::Stream;
+
+                    let status = res.status();
+                    futures::future::Either::A(res.body().concat2().map(move |body| {
+                        panic!(
+                            "{:?} status response. You probably forgot to prime.\n{}",
+                            status,
+                            ::std::str::from_utf8(&*body).unwrap(),
+                        );
+                    }))
+                } else {
+                    futures::future::Either::B(futures::finished(sent.elapsed()))
+                }
+            })
+        }).map_err(|e| {
+            eprintln!("hyper: {:?}", e);
+        }))
     }
 }
 
@@ -247,7 +274,7 @@ fn main() {
                 .short("i")
                 .long("issuers")
                 .takes_value(true)
-                .default_value("4")
+                .default_value("1")
                 .help("Number of issuers to run"),
         )
         .arg(
@@ -297,5 +324,5 @@ fn main() {
         wl.with_histogram(h);
     }
 
-    wl.run(WebClientSpawner::new(args.value_of("prefix").unwrap()));
+    wl.run::<WebClient, _>(WebClientSpawner::new(args.value_of("prefix").unwrap()));
 }

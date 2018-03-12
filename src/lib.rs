@@ -1,24 +1,28 @@
 //#![deny(missing_docs)]
 
+extern crate futures;
 extern crate hdrhistogram;
 extern crate libc;
+extern crate multiqueue;
 extern crate rand;
-extern crate rayon;
+extern crate tokio_core;
 extern crate zipf;
 
 mod issuer;
-pub use issuer::{Issuer, LobstersClient, LobstersRequest, Vote};
+pub use issuer::{LobstersClient, LobstersRequest, Vote};
 
 use hdrhistogram::Histogram;
 use rand::Rng;
+use futures::{Future, Sink, Stream};
+
 use std::collections::HashMap;
 use std::fs;
 use std::time;
 use std::thread;
-use std::sync::{atomic, Arc, Barrier, Mutex};
+use std::sync::{atomic, Arc, Mutex};
 use std::cell::RefCell;
-use std::any::Any;
 use std::mem;
+use std::rc::Rc;
 
 const BASE_OPS_PER_SEC: usize = 10;
 
@@ -32,10 +36,11 @@ const BASE_COMMENTS: u32 = BASE_STORIES * 10;
 const BASE_USERS: u32 = 9000;
 
 thread_local! {
-    static CLIENT: RefCell<Option<Box<Any>>> = RefCell::new(None);
     static SJRN: RefCell<HashMap<mem::Discriminant<LobstersRequest>, Histogram<u64>>> = RefCell::default();
     static RMT: RefCell<HashMap<mem::Discriminant<LobstersRequest>, Histogram<u64>>> = RefCell::default();
 }
+
+type Request = (time::Instant, LobstersRequest);
 
 #[inline]
 fn id_to_slug(mut id: u32) -> [u8; 6] {
@@ -127,10 +132,10 @@ impl<'a> WorkloadBuilder<'a> {
 }
 
 impl<'a> WorkloadBuilder<'a> {
-    pub fn run<I>(&self, issuer: I)
+    pub fn run<C, I>(&self, factory: I)
     where
-        I: Issuer + Send,
-        I::Instance: 'static,
+        I: Send + 'static,
+        C: LobstersClient<Factory = I> + 'static,
     {
         // generating a request takes a while because we have to generate random numbers (including
         // zipfs). so, depending on the target load, we may need more than one load generation
@@ -172,142 +177,110 @@ impl<'a> WorkloadBuilder<'a> {
                     .collect();
                 (sjrn, rmt)
             };
+        let (mut sjrn_t, mut rmt_t) = hists;
 
-        let sjrn_t = Arc::new(Mutex::new(hists.0));
-        let rmt_t = Arc::new(Mutex::new(hists.1));
-        let finished = Arc::new(Barrier::new(nthreads + ngen));
-        let ts = (sjrn_t.clone(), rmt_t.clone(), finished.clone());
+        let start = time::Instant::now();
+        let warmup = self.warmup;
 
-        // okay, so here's a bit of an unfortunate situation:
-        // we don't want to make I: 'static, as that's pretty restrictive. in particular because
-        // *we* know that I won't outlive this function because we wait for the ThreadPool (which
-        // is the only thing that has handles to I (through the Arc)). but convining the compiler
-        // of that is tricky given that ThreadPool generally requires things to be 'static.
-        //
-        // we work around this by forcing a box of `issuer` and erasing its lifetime (by setting it
-        // to 'static). again this is *only* safe because we wait for the threadpool.
-        let issuer = Box::new(issuer) as Box<Issuer<Instance = I::Instance> + Send>;
-        let issuer: Box<Issuer<Instance = I::Instance> + Send + 'static> =
-            unsafe { mem::transmute(issuer) };
-        let issuer = Arc::new(Mutex::new(issuer));
+        let factory = Arc::new(Mutex::new(factory));
+        let (mut pool, jobs) = multiqueue::mpmc_fut_queue(0);
+        let workers: Vec<_> = (0..nthreads)
+            .map(|i| {
+                let jobs = jobs.clone();
+                let factory = factory.clone();
+                thread::Builder::new()
+                    .name(format!("issuer-{}", i))
+                    .spawn(move || {
+                        let core = tokio_core::reactor::Core::new().unwrap();
+                        let c = C::spawn(&mut *factory.lock().unwrap(), &core.handle());
 
-        let pool = rayon::ThreadPoolBuilder::new()
-            .thread_name(|i| format!("issuer-{}", i))
-            .num_threads(nthreads)
-            .start_handler(move |_| {
-                CLIENT.with(|c| {
-                    *c.borrow_mut() = Some(Box::new(issuer.lock().unwrap().spawn()) as Box<Any>);
-                })
+                        Self::run_client(start, warmup, core, c, jobs);
+
+                        // NOTE: there may still be a bunch of requests in the queue here,
+                        // but core.run() will return when the stream is closed.
+
+                        let sjrn = SJRN.with(|sjrn| {
+                            let mut sjrn = sjrn.borrow_mut();
+                            mem::replace(&mut *sjrn, HashMap::default())
+                        });
+                        let rmt = RMT.with(|rmt| {
+                            let mut rmt = rmt.borrow_mut();
+                            mem::replace(&mut *rmt, HashMap::default())
+                        });
+                        (sjrn, rmt)
+                    })
+                    .unwrap()
             })
-            .exit_handler(move |_| {
-                SJRN.with(|sjrn| {
-                    let mut sjrn_master = ts.0.lock().unwrap();
-                    let sjrn = sjrn.borrow();
-                    for (variant, h) in &*sjrn {
-                        sjrn_master
-                            .get_mut(variant)
-                            .expect("missing master entry for variant")
-                            .add(h)
-                            .unwrap();
-                    }
-                });
-                RMT.with(|rmt| {
-                    let mut rmt_master = ts.1.lock().unwrap();
-                    let rmt = rmt.borrow();
-                    for (variant, h) in &*rmt {
-                        rmt_master
-                            .get_mut(variant)
-                            .expect("missing master entry for variant")
-                            .add(h)
-                            .unwrap();
-                    }
-                });
-                ts.2.wait();
-            })
-            .build()
-            .map(Arc::new)
-            .unwrap();
+            .collect();
 
         // TODO: detect if already primed!
+        let mut core = tokio_core::reactor::Core::new().unwrap();
         if true {
-            use rayon::iter::IntoParallelIterator;
-            use rayon::iter::ParallelIterator;
+            // first, we need to prime the database with BASE_STORIES stories!
+            let now = time::Instant::now();
+            let mut rng = rand::thread_rng();
+            pool = core.run(
+                pool.send_all(futures::stream::iter_ok(
+                    (0..BASE_STORIES)
+                        .map(|id| {
+                            // TODO: distribution
+                            let user = rng.gen_range(0, BASE_USERS);
+                            LobstersRequest::Submit {
+                                id: id_to_slug(id),
+                                user: user,
+                                title: format!("Base article {}", id),
+                            }
+                        })
+                        .map(|req| (now, req)),
+                )),
+            ).unwrap()
+                .0;
 
-            pool.install(|| {
-                // first, we need to prime the database with BASE_STORIES stories!
-                (0..BASE_STORIES).into_par_iter().for_each(|id| {
-                    CLIENT.with(|c| {
-                        // force to C so we get specialization
-                        // see https://stackoverflow.com/a/33687996/472927
-                        let mut issuer = c.borrow_mut();
-                        let issuer = issuer.as_mut().unwrap();
-                        let issuer = issuer.downcast_mut::<I::Instance>().unwrap();
-
-                        // TODO: distribution
-                        let user = rand::thread_rng().gen_range(0, BASE_USERS);
-                        issuer.handle(LobstersRequest::Submit {
-                            id: id_to_slug(id),
-                            user: user,
-                            title: format!("Base article {}", id),
-                        });
-                    })
-                });
-            });
-
-            pool.install(|| {
-                // and as many comments
-                (0..BASE_COMMENTS).into_par_iter().for_each(|id| {
-                    CLIENT.with(|c| {
-                        // force to C so we get specialization
-                        // see https://stackoverflow.com/a/33687996/472927
-                        let mut issuer = c.borrow_mut();
-                        let issuer = issuer.as_mut().unwrap();
-                        let issuer = issuer.downcast_mut::<I::Instance>().unwrap();
-
-                        let mut rng = rand::thread_rng();
-                        let user = rng.gen_range(0, BASE_USERS); // TODO: distribution
-                        let story = id % BASE_STORIES; // TODO: distribution
-                        let parent = if rng.gen_weighted_bool(2) {
-                            // we need to pick a parent in the same story
-                            let last_safe_comment_id = id.saturating_sub(nthreads as u32);
-                            // how many stories to we know there are per story?
-                            let safe_comments_per_story = last_safe_comment_id / BASE_STORIES;
-                            // pick the nth comment to chosen story
-                            if safe_comments_per_story != 0 {
-                                let story_comment = rng.gen_range(0, safe_comments_per_story);
-                                Some(story + BASE_STORIES * story_comment)
+            // and as many comments
+            pool = core.run(
+                pool.send_all(futures::stream::iter_ok(
+                    (0..BASE_COMMENTS)
+                        .map(|id| {
+                            let user = rng.gen_range(0, BASE_USERS); // TODO: distribution
+                            let story = id % BASE_STORIES; // TODO: distribution
+                            let parent = if rng.gen_weighted_bool(2) {
+                                // we need to pick a parent in the same story
+                                let last_safe_comment_id = id.saturating_sub(nthreads as u32);
+                                // how many stories to we know there are per story?
+                                let safe_comments_per_story = last_safe_comment_id / BASE_STORIES;
+                                // pick the nth comment to chosen story
+                                if safe_comments_per_story != 0 {
+                                    let story_comment = rng.gen_range(0, safe_comments_per_story);
+                                    Some(story + BASE_STORIES * story_comment)
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
-                            }
-                        } else {
-                            None
-                        };
+                            };
 
-                        issuer.handle(LobstersRequest::Comment {
-                            id: id_to_slug(id),
-                            story: id_to_slug(story),
-                            user: user,
-                            parent: parent.map(id_to_slug),
-                        });
-                    })
-                });
-            });
+                            LobstersRequest::Comment {
+                                id: id_to_slug(id),
+                                story: id_to_slug(story),
+                                user: user,
+                                parent: parent.map(id_to_slug),
+                            }
+                        })
+                        .map(|req| (now, req)),
+                )),
+            ).unwrap()
+                .0;
         }
 
         let start = time::Instant::now();
         let generators: Vec<_> = (0..ngen)
             .map(|geni| {
                 let pool = pool.clone();
-                let finished = finished.clone();
                 let wl = self.to_static();
 
                 thread::Builder::new()
                     .name(format!("load-gen{}", geni))
-                    .spawn(move || {
-                        let ops = wl.run_generator::<I::Instance>(pool, target);
-                        finished.wait();
-                        ops
-                    })
+                    .spawn(move || wl.run_generator::<C>(pool, target))
                     .unwrap()
             })
             .collect();
@@ -315,15 +288,30 @@ impl<'a> WorkloadBuilder<'a> {
         drop(pool);
         let ops: usize = generators.into_iter().map(|gen| gen.join().unwrap()).sum();
 
+        for w in workers {
+            let (sjrn, rmt) = w.join().unwrap();
+            for (variant, h) in sjrn {
+                sjrn_t
+                    .get_mut(&variant)
+                    .expect("missing entry for variant")
+                    .add(h)
+                    .unwrap();
+            }
+            for (variant, h) in rmt {
+                rmt_t
+                    .get_mut(&variant)
+                    .expect("missing entry for variant")
+                    .add(h)
+                    .unwrap();
+            }
+        }
+
         // all done!
         let took = start.elapsed();
         println!(
             "# actual ops/s: {:.2}",
             ops as f64 / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
         );
-
-        let sjrn_t = sjrn_t.lock().unwrap();
-        let rmt_t = rmt_t.lock().unwrap();
 
         if let Some(h) = self.histogram_file {
             match fs::File::create(h) {
@@ -344,32 +332,88 @@ impl<'a> WorkloadBuilder<'a> {
             }
         }
 
-        println!("# op\tmetric\tpct\tms");
-        for (variant, h) in &*sjrn_t {
+        println!("{:<12}\t{:<12}\tpct\tms", "# op", "metric");
+        for (variant, h) in &sjrn_t {
             for &pct in &[50, 95, 99] {
                 println!(
-                    "{:?}\tsojourn\t{}\t{:.2}",
-                    variant,
+                    "{:<12}\t{:<12}\t{}\t{:.2}",
+                    LobstersRequest::variant_name(variant),
+                    "sojourn",
                     pct,
                     h.value_at_quantile(pct as f64 / 100.0),
                 );
             }
-            println!("{:?}\tsojourn\t100\t{:.2}", variant, h.max());
+            println!(
+                "{:<12}\t{:<12}\t100\t{:.2}",
+                LobstersRequest::variant_name(variant),
+                "sojourn",
+                h.max()
+            );
         }
-        for (variant, h) in &*rmt_t {
+        for (variant, h) in &rmt_t {
             for &pct in &[50, 95, 99] {
                 println!(
-                    "{:?}\tprocessing\t{}\t{:.2}",
-                    variant,
+                    "{:<12}\t{:<12}\t{}\t{:.2}",
+                    LobstersRequest::variant_name(variant),
+                    "processing",
                     pct,
                     h.value_at_quantile(pct as f64 / 100.0),
                 );
             }
-            println!("{:?}\tprocessing\t100\t{:.2}", variant, h.max());
+            println!(
+                "{:<12}\t{:<12}\t100\t{:.2}",
+                LobstersRequest::variant_name(variant),
+                "processing",
+                h.max()
+            );
         }
     }
 
-    fn run_generator<C>(self, pool: Arc<rayon::ThreadPool>, target: f64) -> usize
+    fn run_client<C>(
+        start: time::Instant,
+        warmup: time::Duration,
+        mut core: tokio_core::reactor::Core,
+        client: C,
+        jobs: multiqueue::MPMCFutReceiver<Request>,
+    ) where
+        C: LobstersClient,
+    {
+        let client = Rc::new(client);
+        let handle = core.handle();
+        core.run(jobs.for_each(move |(issued, request)| {
+            let variant = mem::discriminant(&request);
+            handle.spawn(C::handle(client.clone(), request).map(move |remote_t| {
+                if issued.duration_since(start) > warmup {
+                    let sjrn_t = issued.elapsed();
+
+                    RMT.with(|h| {
+                        let mut h = h.borrow_mut();
+                        h.entry(variant)
+                            .or_insert_with(|| {
+                                Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
+                            })
+                            .saturating_record(
+                                remote_t.as_secs() * 1_000
+                                    + remote_t.subsec_nanos() as u64 / 1_000_000,
+                            );
+                    });
+                    SJRN.with(|h| {
+                        let mut h = h.borrow_mut();
+                        h.entry(variant)
+                            .or_insert_with(|| {
+                                Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
+                            })
+                            .saturating_record(
+                                sjrn_t.as_secs() * 1_000 + sjrn_t.subsec_nanos() as u64 / 1_000_000,
+                            );
+                    });
+                }
+            }));
+            futures::future::finished(())
+        })).unwrap()
+    }
+
+    fn run_generator<C>(self, mut pool: multiqueue::MPMCFutSender<Request>, target: f64) -> usize
     where
         C: LobstersClient + 'static,
     {
@@ -383,6 +427,7 @@ impl<'a> WorkloadBuilder<'a> {
         let mut rng = rand::thread_rng();
         let interarrival = rand::distributions::exponential::Exp::new(target * 1e-9);
 
+        let mut core = tokio_core::reactor::Core::new().unwrap();
         let mut next = time::Instant::now();
         while next < end {
             let now = time::Instant::now();
@@ -445,49 +490,8 @@ impl<'a> WorkloadBuilder<'a> {
                 }
             };
 
-            let variant = mem::discriminant(&req);
             let issued = next;
-            pool.spawn(move || {
-                CLIENT.with(|c| {
-                    // force to C so we get specialization
-                    // see https://stackoverflow.com/a/33687996/472927
-                    let mut issuer = c.borrow_mut();
-                    let issuer = issuer.as_mut().unwrap();
-                    let issuer = issuer.downcast_mut::<C>().unwrap();
-
-                    let sent = time::Instant::now();
-                    issuer.handle(req);
-                    let done = time::Instant::now();
-
-                    if sent.duration_since(start) > warmup {
-                        let remote_t = done.duration_since(sent);
-                        let sjrn_t = done.duration_since(issued);
-
-                        RMT.with(|h| {
-                            let mut h = h.borrow_mut();
-                            h.entry(variant)
-                                .or_insert_with(|| {
-                                    Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
-                                })
-                                .saturating_record(
-                                    remote_t.as_secs() * 1_000
-                                        + remote_t.subsec_nanos() as u64 / 1_000_000,
-                                );
-                        });
-                        SJRN.with(|h| {
-                            let mut h = h.borrow_mut();
-                            h.entry(variant)
-                                .or_insert_with(|| {
-                                    Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
-                                })
-                                .saturating_record(
-                                    sjrn_t.as_secs() * 1_000
-                                        + sjrn_t.subsec_nanos() as u64 / 1_000_000,
-                                );
-                        });
-                    }
-                });
-            });
+            pool = core.run(pool.send((issued, req))).unwrap();
             ops += 1;
 
             // schedule next delivery
