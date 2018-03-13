@@ -69,28 +69,32 @@ impl WebClient {
         req.headers_mut()
             .set(hyper::header::ContentType::form_url_encoded());
 
-        Box::new(this.client.request(req).map(move |res| {
+        Box::new(this.client.request(req).and_then(move |res| {
             if res.status() != hyper::StatusCode::Found {
-                panic!(
-                    "Failed to log in as user{}/test. Make sure to create all the test users!",
-                    uid
-                );
-            }
-
-            let mut cookie = Cookie::new();
-            if let Some(&SetCookie(ref content)) = res.headers().get() {
-                for c in content {
-                    let c = Cookie::parse_header(&Raw::from(&**c)).unwrap();
-                    for (k, v) in c.iter() {
-                        cookie.append(k.to_string(), v.to_string());
-                    }
-                }
+                use futures::Stream;
+                futures::future::Either::A(res.body().concat2().map(move |body| {
+                    panic!(
+                        "Failed to log in as user{}/test. Make sure to apply the patches!\n{}",
+                        uid,
+                        ::std::str::from_utf8(&*body).unwrap(),
+                    );
+                }))
             } else {
-                unreachable!()
-            }
+                let mut cookie = Cookie::new();
+                if let Some(&SetCookie(ref content)) = res.headers().get() {
+                    for c in content {
+                        let c = Cookie::parse_header(&Raw::from(&**c)).unwrap();
+                        for (k, v) in c.iter() {
+                            cookie.append(k.to_string(), v.to_string());
+                        }
+                    }
+                } else {
+                    unreachable!()
+                }
 
-            this.cookies.borrow_mut().insert(uid, cookie.clone());
-            cookie
+                this.cookies.borrow_mut().insert(uid, cookie.clone());
+                futures::future::Either::B(futures::finished(cookie))
+            }
         }))
     }
 }
