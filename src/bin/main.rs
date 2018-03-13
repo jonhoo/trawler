@@ -282,6 +282,11 @@ fn main() {
                 .help("Number of issuers to run"),
         )
         .arg(
+            Arg::with_name("prime")
+                .long("prime")
+                .help("Set if the backend must be primed with initial stories and comments."),
+        )
+        .arg(
             Arg::with_name("runtime")
                 .short("r")
                 .long("runtime")
@@ -328,5 +333,8 @@ fn main() {
         wl.with_histogram(h);
     }
 
-    wl.run::<WebClient, _>(WebClientSpawner::new(args.value_of("prefix").unwrap()));
+    wl.run::<WebClient, _>(
+        WebClientSpawner::new(args.value_of("prefix").unwrap()),
+        args.is_present("prime"),
+    );
 }

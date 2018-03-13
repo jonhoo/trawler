@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::time;
 use std::thread;
-use std::sync::{atomic, Arc, Mutex};
+use std::sync::{atomic, Arc, Barrier, Mutex};
 use std::cell::RefCell;
 use std::mem;
 use std::rc::Rc;
@@ -40,7 +40,11 @@ thread_local! {
     static RMT: RefCell<HashMap<mem::Discriminant<LobstersRequest>, Histogram<u64>>> = RefCell::default();
 }
 
-type Request = (time::Instant, LobstersRequest);
+#[derive(Debug, Clone)]
+enum WorkerCommand {
+    Request(time::Instant, LobstersRequest),
+    Wait(Arc<Barrier>),
+}
 
 #[inline]
 fn id_to_slug(mut id: u32) -> [u8; 6] {
@@ -132,7 +136,7 @@ impl<'a> WorkloadBuilder<'a> {
 }
 
 impl<'a> WorkloadBuilder<'a> {
-    pub fn run<C, I>(&self, factory: I)
+    pub fn run<C, I>(&self, factory: I, prime: bool)
     where
         I: Send + 'static,
         C: LobstersClient<Factory = I> + 'static,
@@ -179,9 +183,7 @@ impl<'a> WorkloadBuilder<'a> {
             };
         let (mut sjrn_t, mut rmt_t) = hists;
 
-        let start = time::Instant::now();
         let warmup = self.warmup;
-
         let factory = Arc::new(Mutex::new(factory));
         let (mut pool, jobs) = multiqueue::mpmc_fut_queue(0);
         let workers: Vec<_> = (0..nthreads)
@@ -194,7 +196,7 @@ impl<'a> WorkloadBuilder<'a> {
                         let core = tokio_core::reactor::Core::new().unwrap();
                         let c = C::spawn(&mut *factory.lock().unwrap(), &core.handle());
 
-                        Self::run_client(start, warmup, core, c, jobs);
+                        Self::run_client(warmup, core, c, jobs);
 
                         // NOTE: there may still be a bunch of requests in the queue here,
                         // but core.run() will return when the stream is closed.
@@ -213,9 +215,13 @@ impl<'a> WorkloadBuilder<'a> {
             })
             .collect();
 
-        // TODO: detect if already primed!
         let mut core = tokio_core::reactor::Core::new().unwrap();
-        if true {
+        let barrier = Arc::new(Barrier::new(nthreads + 1));
+
+        // TODO: first, log in all the users
+        // TODO: pace ourselves when generating batch requests like this
+
+        if prime {
             // first, we need to prime the database with BASE_STORIES stories!
             let now = time::Instant::now();
             let mut rng = rand::thread_rng();
@@ -231,10 +237,21 @@ impl<'a> WorkloadBuilder<'a> {
                                 title: format!("Base article {}", id),
                             }
                         })
-                        .map(|req| (now, req)),
+                        .map(|req| WorkerCommand::Request(now, req))
+                        .chain((0..nthreads).map(|_| {
+                            // we don't normally know which worker thread will receive any given
+                            // command (it's mpmc after all), but since a ::Wait causes the
+                            // receiving thread to *block*, we know that once it receives one, it
+                            // can't receive another until the barrier has been passed! Therefore,
+                            // sending `nthreads` barriers should ensure that every thread gets one
+                            WorkerCommand::Wait(barrier.clone())
+                        })),
                 )),
             ).unwrap()
                 .0;
+
+            // wait for all threads to finish priming stories
+            barrier.wait();
 
             // and as many comments
             pool = core.run(
@@ -266,11 +283,22 @@ impl<'a> WorkloadBuilder<'a> {
                                 parent: parent.map(id_to_slug),
                             }
                         })
-                        .map(|req| (now, req)),
+                        .map(|req| WorkerCommand::Request(now, req))
+                        .chain((0..nthreads).map(|_| WorkerCommand::Wait(barrier.clone()))),
                 )),
             ).unwrap()
                 .0;
+
+            // wait for all threads to finish priming comments
+            barrier.wait();
         }
+
+        // wait for all threads to be ready (and set their start time correctly)
+        pool = core.run(pool.send_all(futures::stream::iter_ok(
+            (0..nthreads).map(|_| WorkerCommand::Wait(barrier.clone())),
+        ))).unwrap()
+            .0;
+        barrier.wait();
 
         let start = time::Instant::now();
         let generators: Vec<_> = (0..ngen)
@@ -370,50 +398,64 @@ impl<'a> WorkloadBuilder<'a> {
     }
 
     fn run_client<C>(
-        start: time::Instant,
         warmup: time::Duration,
         mut core: tokio_core::reactor::Core,
         client: C,
-        jobs: multiqueue::MPMCFutReceiver<Request>,
+        jobs: multiqueue::MPMCFutReceiver<WorkerCommand>,
     ) where
         C: LobstersClient,
     {
+        let mut start = time::Instant::now();
         let client = Rc::new(client);
         let handle = core.handle();
-        core.run(jobs.for_each(move |(issued, request)| {
-            let variant = mem::discriminant(&request);
-            handle.spawn(C::handle(client.clone(), request).map(move |remote_t| {
-                if issued.duration_since(start) > warmup {
-                    let sjrn_t = issued.elapsed();
-
-                    RMT.with(|h| {
-                        let mut h = h.borrow_mut();
-                        h.entry(variant)
-                            .or_insert_with(|| {
-                                Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
-                            })
-                            .saturating_record(
-                                remote_t.as_secs() * 1_000
-                                    + remote_t.subsec_nanos() as u64 / 1_000_000,
-                            );
-                    });
-                    SJRN.with(|h| {
-                        let mut h = h.borrow_mut();
-                        h.entry(variant)
-                            .or_insert_with(|| {
-                                Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
-                            })
-                            .saturating_record(
-                                sjrn_t.as_secs() * 1_000 + sjrn_t.subsec_nanos() as u64 / 1_000_000,
-                            );
-                    });
+        core.run(jobs.for_each(move |cmd| {
+            match cmd {
+                WorkerCommand::Wait(barrier) => {
+                    barrier.wait();
+                    // start should be set to the first time after priming has finished
+                    start = time::Instant::now();
                 }
-            }));
+                WorkerCommand::Request(issued, request) => {
+                    let variant = mem::discriminant(&request);
+                    handle.spawn(C::handle(client.clone(), request).map(move |remote_t| {
+                        if issued.duration_since(start) > warmup {
+                            let sjrn_t = issued.elapsed();
+
+                            RMT.with(|h| {
+                                let mut h = h.borrow_mut();
+                                h.entry(variant)
+                                    .or_insert_with(|| {
+                                        Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
+                                    })
+                                    .saturating_record(
+                                        remote_t.as_secs() * 1_000
+                                            + remote_t.subsec_nanos() as u64 / 1_000_000,
+                                    );
+                            });
+                            SJRN.with(|h| {
+                                let mut h = h.borrow_mut();
+                                h.entry(variant)
+                                    .or_insert_with(|| {
+                                        Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
+                                    })
+                                    .saturating_record(
+                                        sjrn_t.as_secs() * 1_000
+                                            + sjrn_t.subsec_nanos() as u64 / 1_000_000,
+                                    );
+                            });
+                        }
+                    }));
+                }
+            }
             futures::future::finished(())
         })).unwrap()
     }
 
-    fn run_generator<C>(self, mut pool: multiqueue::MPMCFutSender<Request>, target: f64) -> usize
+    fn run_generator<C>(
+        self,
+        mut pool: multiqueue::MPMCFutSender<WorkerCommand>,
+        target: f64,
+    ) -> usize
     where
         C: LobstersClient + 'static,
     {
@@ -491,7 +533,8 @@ impl<'a> WorkloadBuilder<'a> {
             };
 
             let issued = next;
-            pool = core.run(pool.send((issued, req))).unwrap();
+            pool = core.run(pool.send(WorkerCommand::Request(issued, req)))
+                .unwrap();
             ops += 1;
 
             // schedule next delivery
