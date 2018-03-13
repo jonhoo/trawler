@@ -1,12 +1,16 @@
-1133494 61.19% GET /stories/X/Y
- 590907 31.90% GET /
-  71829  3.88% GET /comments
-  19150  1.03% GET /comments.rss
-  12020   .65% POST /comments/X/upvote
-   9033   .49% POST /stories/X/upvote
-   7427   .40% POST /comments
-   4591   .25% GET /login
-   1660   .09% POST /login
-   1019   .06% POST /stories
-    861   .05% POST /comments/X/unvote
-    338   .02% POST /stories/X/unvote
+1139580  56.330%  GET   /stories/X
+ 594323  29.378%  GET   /
+ 159959   7.907%  GET   /u/X
+  72320   3.575%  GET   /comments
+  19287   0.953%  GET   /comments.rss
+  12088   0.598%  POST  /comments/X/upvote
+   9081   0.449%  POST  /stories/X/upvote
+   6160   0.305%  POST  /comments
+   4597   0.227%  GET   /login
+   1663   0.082%  POST  /login
+   1322   0.065%  POST  /comments/X
+   1022   0.051%  POST  /stories
+    865   0.043%  POST  /comments/X/unvote
+    395   0.020%  POST  /stories/X
+    341   0.017%  POST  /stories/X/unvote
+     55   0.003%  POST  /logout
