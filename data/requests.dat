@@ -1,0 +1,12 @@
+1133494 61.19% GET /stories/X/Y
+ 590907 31.90% GET /
+  71829  3.88% GET /comments
+  19150  1.03% GET /comments.rss
+  12020   .65% POST /comments/X/upvote
+   9033   .49% POST /stories/X/upvote
+   7427   .40% POST /comments
+   4591   .25% GET /login
+   1660   .09% POST /login
+   1019   .06% POST /stories
+    861   .05% POST /comments/X/unvote
+    338   .02% POST /stories/X/unvote
