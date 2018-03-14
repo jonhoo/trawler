@@ -118,6 +118,7 @@ impl trawler::LobstersClient for WebClient {
         let mut expected = hyper::StatusCode::Ok;
         let mut req = match req {
             LobstersRequest::Frontpage => {
+                // XXX: do we want to pick randomly between logged in users when making requests?
                 let url = hyper::Uri::from_str(this.prefix.as_ref()).unwrap();
                 hyper::Request::new(hyper::Method::Get, url)
             }
@@ -126,9 +127,12 @@ impl trawler::LobstersClient for WebClient {
                     hyper::Uri::from_str(this.prefix.join("recent").unwrap().as_ref()).unwrap();
                 hyper::Request::new(hyper::Method::Get, url)
             }
-            LobstersRequest::Login(..) => {
-                // XXX: do we want to pick randomly between logged in users when making requests?
-                return Box::new(futures::failed(()));
+            LobstersRequest::Login(uid) => {
+                return Box::new(
+                    WebClient::get_cookie_for(this.clone(), uid)
+                        .map(move |_| sent.elapsed())
+                        .map_err(|_| ()),
+                );
             }
             LobstersRequest::Logout(..) => {
                 /*

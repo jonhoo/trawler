@@ -219,13 +219,31 @@ impl<'a> WorkloadBuilder<'a> {
 
         let mut core = tokio_core::reactor::Core::new().unwrap();
         let barrier = Arc::new(Barrier::new(nthreads + 1));
+        let now = time::Instant::now();
 
-        // TODO: first, log in all the users
-        // TODO: pace ourselves when generating batch requests like this
+        // first, log in all the users
+        pool = core.run(
+            pool.send_all(futures::stream::iter_ok(
+                (0..BASE_USERS)
+                    .map(LobstersRequest::Login)
+                    .map(|l| WorkerCommand::Request(now, l)),
+            )),
+        ).unwrap()
+            .0;
+
+        // wait for all threads to be ready (and set their start time correctly)
+        // we don't normally know which worker thread will receive any given command (it's mpmc
+        // after all), but since a ::Wait causes the receiving thread to *block*, we know that once
+        // it receives one, it can't receive another until the barrier has been passed! Therefore,
+        // sending `nthreads` barriers should ensure that every thread gets one
+        pool = core.run(pool.send_all(futures::stream::iter_ok(
+            (0..nthreads).map(|_| WorkerCommand::Wait(barrier.clone())),
+        ))).unwrap()
+            .0;
+        barrier.wait();
 
         if prime {
             // first, we need to prime the database with BASE_STORIES stories!
-            let now = time::Instant::now();
             let mut rng = rand::thread_rng();
             pool = core.run(
                 pool.send_all(futures::stream::iter_ok(
@@ -240,14 +258,7 @@ impl<'a> WorkloadBuilder<'a> {
                             }
                         })
                         .map(|req| WorkerCommand::Request(now, req))
-                        .chain((0..nthreads).map(|_| {
-                            // we don't normally know which worker thread will receive any given
-                            // command (it's mpmc after all), but since a ::Wait causes the
-                            // receiving thread to *block*, we know that once it receives one, it
-                            // can't receive another until the barrier has been passed! Therefore,
-                            // sending `nthreads` barriers should ensure that every thread gets one
-                            WorkerCommand::Wait(barrier.clone())
-                        })),
+                        .chain((0..nthreads).map(|_| WorkerCommand::Wait(barrier.clone()))),
                 )),
             ).unwrap()
                 .0;
@@ -292,15 +303,9 @@ impl<'a> WorkloadBuilder<'a> {
                 .0;
 
             // wait for all threads to finish priming comments
+            // the addition of the ::Wait barrier will also ensure that start is (re)set
             barrier.wait();
         }
-
-        // wait for all threads to be ready (and set their start time correctly)
-        pool = core.run(pool.send_all(futures::stream::iter_ok(
-            (0..nthreads).map(|_| WorkerCommand::Wait(barrier.clone())),
-        ))).unwrap()
-            .0;
-        barrier.wait();
 
         let start = time::Instant::now();
         let generators: Vec<_> = (0..ngen)
@@ -434,7 +439,8 @@ impl<'a> WorkloadBuilder<'a> {
                     let variant = mem::discriminant(&request);
                     handle.spawn(C::handle(client.clone(), request).map(move |remote_t| {
                         *in_flight.borrow_mut() -= 1;
-                        if issued.duration_since(start) > warmup {
+                        // start < issued for priming (Login in particular)
+                        if issued >= start && issued.duration_since(start) > warmup {
                             let sjrn_t = issued.elapsed();
 
                             RMT.with(|h| {
