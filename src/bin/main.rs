@@ -6,6 +6,8 @@ extern crate regex;
 extern crate tokio_core;
 extern crate trawler;
 extern crate url;
+#[macro_use]
+extern crate lazy_static;
 
 use clap::{App, Arg};
 use futures::Future;
@@ -15,7 +17,11 @@ use std::time;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::rc::Rc;
-use std::cell::RefCell;
+use std::sync::RwLock;
+
+lazy_static! {
+    static ref SESSION_COOKIES: RwLock<HashMap<u32, hyper::header::Cookie>> = RwLock::default();
+}
 
 struct WebClientSpawner {
     prefix: url::Url,
@@ -31,7 +37,6 @@ impl WebClientSpawner {
 struct WebClient {
     prefix: url::Url,
     client: hyper::Client<hyper::client::HttpConnector>,
-    cookies: RefCell<HashMap<u32, hyper::header::Cookie>>,
 }
 impl WebClient {
     fn new(handle: &tokio_core::reactor::Handle, prefix: &url::Url) -> Self {
@@ -39,7 +44,6 @@ impl WebClient {
         WebClient {
             prefix: prefix.clone(),
             client: client,
-            cookies: Default::default(),
         }
     }
 
@@ -48,7 +52,7 @@ impl WebClient {
         uid: u32,
     ) -> Box<futures::Future<Item = hyper::header::Cookie, Error = hyper::Error>> {
         {
-            let cookies = this.cookies.borrow();
+            let cookies = SESSION_COOKIES.read().unwrap();
             if let Some(cookie) = cookies.get(&uid) {
                 return Box::new(futures::finished(cookie.clone()));
             }
@@ -92,7 +96,7 @@ impl WebClient {
                     unreachable!()
                 }
 
-                this.cookies.borrow_mut().insert(uid, cookie.clone());
+                SESSION_COOKIES.write().unwrap().insert(uid, cookie.clone());
                 futures::future::Either::B(futures::finished(cookie))
             }
         }))
