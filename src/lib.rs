@@ -24,6 +24,8 @@ use std::cell::RefCell;
 use std::mem;
 use std::rc::Rc;
 
+const MAX_IN_FLIGHT: usize = 10;
+
 const BASE_OPS_PER_SEC: usize = 10;
 
 // at time of writing, https://lobste.rs/recent/page/1601 is last page
@@ -401,14 +403,18 @@ impl<'a> WorkloadBuilder<'a> {
         warmup: time::Duration,
         mut core: tokio_core::reactor::Core,
         client: C,
-        jobs: multiqueue::MPMCFutReceiver<WorkerCommand>,
+        mut jobs: multiqueue::MPMCFutReceiver<WorkerCommand>,
     ) where
         C: LobstersClient,
     {
         let mut start = time::Instant::now();
         let client = Rc::new(client);
+        let in_flight = Rc::new(RefCell::new(0));
         let handle = core.handle();
-        core.run(jobs.for_each(move |cmd| {
+
+        while let Ok((Some(cmd), stream)) = core.run(jobs.into_future()) {
+            jobs = stream;
+
             match cmd {
                 WorkerCommand::Wait(barrier) => {
                     barrier.wait();
@@ -416,8 +422,18 @@ impl<'a> WorkloadBuilder<'a> {
                     start = time::Instant::now();
                 }
                 WorkerCommand::Request(issued, request) => {
+                    // ensure we don't have too many requests in flight at the same time
+                    {
+                        while *in_flight.borrow_mut() >= MAX_IN_FLIGHT {
+                            core.turn(None);
+                        }
+                        *in_flight.borrow_mut() += 1;
+                    }
+
+                    let in_flight = in_flight.clone();
                     let variant = mem::discriminant(&request);
                     handle.spawn(C::handle(client.clone(), request).map(move |remote_t| {
+                        *in_flight.borrow_mut() -= 1;
                         if issued.duration_since(start) > warmup {
                             let sjrn_t = issued.elapsed();
 
@@ -447,8 +463,7 @@ impl<'a> WorkloadBuilder<'a> {
                     }));
                 }
             }
-            futures::future::finished(())
-        })).unwrap()
+        }
     }
 
     fn run_generator<C>(
