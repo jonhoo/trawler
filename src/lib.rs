@@ -25,7 +25,7 @@ const BASE_OPS_PER_SEC: usize = 10;
 const BASE_STORIES: u32 = 25 * 1601;
 
 // wild guess
-const BASE_COMMENTS: u32 = BASE_STORIES * 10;
+const BASE_COMMENTS: u32 = BASE_STORIES * 7;
 
 // document.querySelectorAll(".user_tree > li").length on https://lobste.rs/u
 const BASE_USERS: u32 = 9000;
@@ -36,6 +36,7 @@ enum WorkerCommand {
     Wait(Arc<Barrier>),
 }
 
+/// Set the parameters for a new Lobsters-like workload.
 pub struct WorkloadBuilder<'a> {
     load: execution::Workload,
     histogram_file: Option<&'a str>,
@@ -45,7 +46,8 @@ impl<'a> Default for WorkloadBuilder<'a> {
     fn default() -> Self {
         WorkloadBuilder {
             load: execution::Workload {
-                scale: 1.0,
+                mem_scale: 1.0,
+                req_scale: 1.0,
 
                 threads: 1,
 
@@ -58,8 +60,16 @@ impl<'a> Default for WorkloadBuilder<'a> {
 }
 
 impl<'a> WorkloadBuilder<'a> {
-    pub fn scale(&mut self, factor: f64) -> &mut Self {
-        self.load.scale = factor;
+    /// Set the memory and request scale factor for the workload.
+    ///
+    /// A factor of 1 generates a workload commensurate with what the [real lobste.rs
+    /// sees](https://lobste.rs/s/cqnzl5/). At memory scale 1, the site has ~40k stories with a
+    /// total of ~300k comments and ~570k votes spread across 9k users. At request factor 1, the
+    /// generated load is on average 44 requests/minute, with a request distribution set according
+    /// to the one observed on lobste.rs (see `data/` for details).
+    pub fn scale(&mut self, mem_factor: f64, req_factor: f64) -> &mut Self {
+        self.load.mem_scale = mem_factor;
+        self.load.req_scale = req_factor;
         self
     }
 

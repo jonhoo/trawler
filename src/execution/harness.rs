@@ -10,7 +10,7 @@ use tokio_core;
 use multiqueue;
 
 pub(crate) fn run<C, I>(
-    workload: execution::Workload,
+    load: execution::Workload,
     factory: I,
     prime: bool,
 ) -> (
@@ -24,13 +24,13 @@ where
     // generating a request takes a while because we have to generate random numbers (including
     // zipfs). so, depending on the target load, we may need more than one load generation
     // thread. we'll make them all share the pool of issuers though.
-    let mut target = BASE_OPS_PER_SEC as f64 * workload.scale;
+    let mut target = BASE_OPS_PER_SEC as f64 * load.req_scale;
     let per_generator = 10;
     let ngen = (target as usize + per_generator - 1) / per_generator; // rounded up
     target /= ngen as f64;
 
-    let nthreads = workload.threads;
-    let warmup = workload.warmup;
+    let nthreads = load.threads;
+    let warmup = load.warmup;
 
     let factory = Arc::new(Mutex::new(factory));
     let (mut pool, jobs) = multiqueue::mpmc_fut_queue(0);
@@ -57,9 +57,10 @@ where
     let now = time::Instant::now();
 
     // first, log in all the users
+    let nusers = (load.mem_scale * BASE_USERS as f64) as u32;
     pool = core.run(
         pool.send_all(futures::stream::iter_ok(
-            (0..BASE_USERS)
+            (0..nusers)
                 .map(LobstersRequest::Login)
                 .map(|l| WorkerCommand::Request(now, l)),
         )),
@@ -79,13 +80,14 @@ where
 
     if prime {
         // first, we need to prime the database with BASE_STORIES stories!
+        let nstories = (load.mem_scale * BASE_STORIES as f64) as u32;
         let mut rng = rand::thread_rng();
         pool = core.run(
             pool.send_all(futures::stream::iter_ok(
-                (0..BASE_STORIES)
+                (0..nstories)
                     .map(|id| {
                         // TODO: distribution
-                        let user = rng.gen_range(0, BASE_USERS);
+                        let user = rng.gen_range(0, nusers);
                         LobstersRequest::Submit {
                             id: id_to_slug(id),
                             user: user,
@@ -102,21 +104,22 @@ where
         barrier.wait();
 
         // and as many comments
+        let ncomments = (load.mem_scale * BASE_COMMENTS as f64) as u32;
         pool = core.run(
             pool.send_all(futures::stream::iter_ok(
-                (0..BASE_COMMENTS)
+                (0..ncomments)
                     .map(|id| {
-                        let user = rng.gen_range(0, BASE_USERS); // TODO: distribution
-                        let story = id % BASE_STORIES; // TODO: distribution
+                        let user = rng.gen_range(0, nusers); // TODO: distribution
+                        let story = id % nstories; // TODO: distribution
                         let parent = if rng.gen_weighted_bool(2) {
                             // we need to pick a parent in the same story
                             let last_safe_comment_id = id.saturating_sub(nthreads as u32);
                             // how many stories to we know there are per story?
-                            let safe_comments_per_story = last_safe_comment_id / BASE_STORIES;
+                            let safe_comments_per_story = last_safe_comment_id / nstories;
                             // pick the nth comment to chosen story
                             if safe_comments_per_story != 0 {
                                 let story_comment = rng.gen_range(0, safe_comments_per_story);
-                                Some(story + BASE_STORIES * story_comment)
+                                Some(story + nstories * story_comment)
                             } else {
                                 None
                             }
@@ -145,11 +148,11 @@ where
     let generators: Vec<_> = (0..ngen)
         .map(|geni| {
             let pool = pool.clone();
-            let workload = workload.clone();
+            let load = load.clone();
 
             thread::Builder::new()
                 .name(format!("load-gen{}", geni))
-                .spawn(move || execution::generator::run::<C>(workload, pool, target))
+                .spawn(move || execution::generator::run::<C>(load, pool, target))
                 .unwrap()
         })
         .collect();

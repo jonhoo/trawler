@@ -329,8 +329,10 @@ fn main() {
         )
         .get_matches();
 
+    let scale = value_t_or_exit!(args, "scale", f64);
+
     let mut wl = trawler::WorkloadBuilder::default();
-    wl.scale(value_t_or_exit!(args, "scale", f64))
+    wl.scale(scale, scale)
         .issuers(value_t_or_exit!(args, "issuers", usize))
         .time(
             time::Duration::from_secs(value_t_or_exit!(args, "warmup", u64)),

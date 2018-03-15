@@ -20,6 +20,10 @@ where
     let warmup = load.warmup;
     let runtime = load.runtime;
 
+    let nusers = (load.mem_scale * BASE_USERS as f64) as u32;
+    let nstories = (load.mem_scale * BASE_STORIES as f64) as u32;
+    let ncomments = (load.mem_scale * BASE_COMMENTS as f64) as u32;
+
     let start = time::Instant::now();
     let end = start + warmup + runtime;
 
@@ -45,15 +49,15 @@ where
         } else if seed < 40 {
             LobstersRequest::Recent
         } else if seed < 80 {
-            LobstersRequest::Story(id_to_slug(rng.gen_range(0, BASE_STORIES)))
+            LobstersRequest::Story(id_to_slug(rng.gen_range(0, nstories)))
         } else if seed < 81 {
-            LobstersRequest::Login(rng.gen_range(0, BASE_USERS))
+            LobstersRequest::Login(rng.gen_range(0, nusers))
         } else if seed < 82 {
-            LobstersRequest::Logout(rng.gen_range(0, BASE_USERS))
+            LobstersRequest::Logout(rng.gen_range(0, nusers))
         } else if seed < 90 {
             LobstersRequest::StoryVote(
-                rng.gen_range(0, BASE_USERS),
-                id_to_slug(rng.gen_range(0, BASE_STORIES)),
+                rng.gen_range(0, nusers),
+                id_to_slug(rng.gen_range(0, nstories)),
                 if rng.gen_weighted_bool(2) {
                     Vote::Up
                 } else {
@@ -62,8 +66,8 @@ where
             )
         } else if seed < 95 {
             LobstersRequest::CommentVote(
-                rng.gen_range(0, BASE_USERS),
-                id_to_slug(rng.gen_range(0, BASE_COMMENTS)),
+                rng.gen_range(0, nusers),
+                id_to_slug(rng.gen_range(0, ncomments)),
                 if rng.gen_weighted_bool(2) {
                     Vote::Up
                 } else {
@@ -72,20 +76,20 @@ where
             )
         } else if seed < 97 {
             // TODO: how do we pick a unique ID here?
-            let id = rng.gen_range(BASE_STORIES, BASE_STORIES + u16::max_value() as u32);
+            let id = rng.gen_range(nstories, nstories + u16::max_value() as u32);
             LobstersRequest::Submit {
                 id: id_to_slug(id),
-                user: rng.gen_range(0, BASE_USERS),
+                user: rng.gen_range(0, nusers),
                 title: format!("benchmark {}", id),
             }
         } else {
             // TODO: how do we pick a unique ID here?
-            let id = rng.gen_range(BASE_COMMENTS, BASE_COMMENTS + u16::max_value() as u32);
+            let id = rng.gen_range(ncomments, ncomments + u16::max_value() as u32);
             // TODO: sometimes pick a parent comment
             LobstersRequest::Comment {
                 id: id_to_slug(id),
-                user: rng.gen_range(0, BASE_USERS),
-                story: id_to_slug(rng.gen_range(0, BASE_STORIES)),
+                user: rng.gen_range(0, nusers),
+                story: id_to_slug(rng.gen_range(0, nstories)),
                 parent: None,
             }
         };
