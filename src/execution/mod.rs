@@ -45,3 +45,5 @@ pub(crate) struct Workload {
 pub(crate) mod issuer;
 pub(crate) mod generator;
 pub(crate) mod harness;
+
+pub use self::issuer::MAX_IN_FLIGHT;

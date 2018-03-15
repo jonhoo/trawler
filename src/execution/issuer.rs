@@ -1,4 +1,5 @@
-const MAX_IN_FLIGHT: usize = 10;
+/// The maximum number of outstanding request any single issuer is allowed to have to the backend.
+pub const MAX_IN_FLIGHT: usize = 10;
 
 use execution::Stats;
 use client::LobstersClient;
