@@ -35,6 +35,13 @@ where
 
         match cmd {
             WorkerCommand::Wait(barrier) => {
+                // when we get a barrier, wait for all pending requests to complete
+                {
+                    while *in_flight.borrow_mut() > 0 {
+                        core.turn(None);
+                    }
+                }
+
                 barrier.wait();
                 // start should be set to the first time after priming has finished
                 start = time::Instant::now();
