@@ -274,12 +274,18 @@ fn main() {
         .version("0.1")
         .about("Benchmark a lobste.rs Rails installation")
         .arg(
-            Arg::with_name("scale")
-                .short("s")
-                .long("scale")
+            Arg::with_name("memscale")
+                .long("memscale")
                 .takes_value(true)
                 .default_value("1.0")
-                .help("Scale factor for workload"),
+                .help("Memory scale factor for workload"),
+        )
+        .arg(
+            Arg::with_name("reqscale")
+                .long("reqscale")
+                .takes_value(true)
+                .default_value("1.0")
+                .help("Reuest load scale factor for workload"),
         )
         .arg(
             Arg::with_name("issuers")
@@ -329,11 +335,11 @@ fn main() {
         )
         .get_matches();
 
-    let scale = value_t_or_exit!(args, "scale", f64);
-
     let mut wl = trawler::WorkloadBuilder::default();
-    wl.scale(scale, scale)
-        .issuers(value_t_or_exit!(args, "issuers", usize))
+    wl.scale(
+        value_t_or_exit!(args, "memscale", f64),
+        value_t_or_exit!(args, "reqscale", f64),
+    ).issuers(value_t_or_exit!(args, "issuers", usize))
         .time(
             time::Duration::from_secs(value_t_or_exit!(args, "warmup", u64)),
             time::Duration::from_secs(value_t_or_exit!(args, "runtime", u64)),
