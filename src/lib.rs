@@ -217,39 +217,49 @@ impl<'a> WorkloadBuilder<'a> {
         }
 
         println!("{:<12}\t{:<12}\tpct\tms", "# op", "metric");
-        for (variant, h) in &sjrn_t {
-            for &pct in &[50, 95, 99] {
+        for variant in LobstersRequest::all() {
+            if let Some(h) = sjrn_t.get(&variant) {
+                if h.max() == 0 {
+                    continue;
+                }
+                for &pct in &[50, 95, 99] {
+                    println!(
+                        "{:<12}\t{:<12}\t{}\t{:.2}",
+                        LobstersRequest::variant_name(&variant),
+                        "sojourn",
+                        pct,
+                        h.value_at_quantile(pct as f64 / 100.0),
+                    );
+                }
                 println!(
-                    "{:<12}\t{:<12}\t{}\t{:.2}",
-                    LobstersRequest::variant_name(variant),
+                    "{:<12}\t{:<12}\t100\t{:.2}",
+                    LobstersRequest::variant_name(&variant),
                     "sojourn",
-                    pct,
-                    h.value_at_quantile(pct as f64 / 100.0),
+                    h.max()
                 );
             }
-            println!(
-                "{:<12}\t{:<12}\t100\t{:.2}",
-                LobstersRequest::variant_name(variant),
-                "sojourn",
-                h.max()
-            );
         }
-        for (variant, h) in &rmt_t {
-            for &pct in &[50, 95, 99] {
+        for variant in LobstersRequest::all() {
+            if let Some(h) = rmt_t.get(&variant) {
+                if h.max() == 0 {
+                    continue;
+                }
+                for &pct in &[50, 95, 99] {
+                    println!(
+                        "{:<12}\t{:<12}\t{}\t{:.2}",
+                        LobstersRequest::variant_name(&variant),
+                        "processing",
+                        pct,
+                        h.value_at_quantile(pct as f64 / 100.0),
+                    );
+                }
                 println!(
-                    "{:<12}\t{:<12}\t{}\t{:.2}",
-                    LobstersRequest::variant_name(variant),
+                    "{:<12}\t{:<12}\t100\t{:.2}",
+                    LobstersRequest::variant_name(&variant),
                     "processing",
-                    pct,
-                    h.value_at_quantile(pct as f64 / 100.0),
+                    h.max()
                 );
             }
-            println!(
-                "{:<12}\t{:<12}\t100\t{:.2}",
-                LobstersRequest::variant_name(variant),
-                "processing",
-                h.max()
-            );
         }
     }
 }
