@@ -11,7 +11,7 @@ index 6a6118b..1842ddb 100644
    TRAFFIC_DECREMENTER = 0.50
  
 diff --git a/app/controllers/comments_controller.rb b/app/controllers/comments_controller.rb
-index 95d8203..aeec502 100644
+index 95d8203..adff129 100644
 --- a/app/controllers/comments_controller.rb
 +++ b/app/controllers/comments_controller.rb
 @@ -16,6 +16,7 @@ class CommentsController < ApplicationController
@@ -21,6 +21,26 @@ index 95d8203..aeec502 100644
 +    comment.short_id = params[:short_id].to_s
      comment.comment = params[:comment].to_s
      comment.user = @user
+ 
+@@ -33,19 +34,6 @@ class CommentsController < ApplicationController
+       end
+     end
+ 
+-    # prevent double-clicks of the post button
+-    if params[:preview].blank? &&
+-    (pc = Comment.where(:story_id => story.id, :user_id => @user.id,
+-      :parent_comment_id => comment.parent_comment_id).first)
+-      if (Time.now - pc.created_at) < 5.minutes && !@user.is_moderator?
+-        comment.errors.add(:comment, "^You have already posted a comment " <<
+-          "here recently.")
+-
+-        return render :partial => "commentbox", :layout => false,
+-          :content_type => "text/html", :locals => { :comment => comment }
+-      end
+-    end
+-
+     if comment.valid? && params[:preview].blank? && comment.save
+       comment.current_vote = { :vote => 1 }
  
 diff --git a/app/controllers/login_controller.rb b/app/controllers/login_controller.rb
 index 4d1aa0e..9ee2785 100644
