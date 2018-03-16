@@ -113,7 +113,7 @@ where
                         let story = id % nstories; // TODO: distribution
                         let parent = if rng.gen_weighted_bool(2) {
                             // we need to pick a parent in the same story
-                            let last_safe_comment_id = id.saturating_sub(nthreads as u32);
+                            let last_safe_comment_id = id.saturating_sub(nthreads as u32) / 2;
                             // how many stories to we know there are per story?
                             let safe_comments_per_story = last_safe_comment_id / nstories;
                             // pick the nth comment to chosen story
