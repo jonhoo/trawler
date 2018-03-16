@@ -82,6 +82,7 @@ where
     barrier.wait();
 
     if prime {
+        println!("--> priming database");
         let mut rng = rand::thread_rng();
 
         // first, we need to prime the database stories!
@@ -144,6 +145,7 @@ where
         // wait for all threads to finish priming comments
         // the addition of the ::Wait barrier will also ensure that start is (re)set
         barrier.wait();
+        println!("--> finished priming database");
     }
 
     let generators: Vec<_> = (0..ngen)
