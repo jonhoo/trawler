@@ -79,27 +79,27 @@ impl Sampler {
 #[inline]
 fn id_to_slug(mut id: u32) -> [u8; 6] {
     // convert id to unique string
-    // 26 possible characters (a-z0-9)
+    // 36 possible characters (a-z0-9)
     let mut slug = [0; 6];
     let mut digit: u8;
-    digit = (id % 26) as u8;
+    digit = (id % 36) as u8;
     slug[5] = digit + if digit < 10 { b'0' } else { b'a' - 10 };
-    id /= 26;
-    digit = (id % 26) as u8;
+    id /= 36;
+    digit = (id % 36) as u8;
     slug[4] = digit + if digit < 10 { b'0' } else { b'a' - 10 };
-    id /= 26;
-    digit = (id % 26) as u8;
+    id /= 36;
+    digit = (id % 36) as u8;
     slug[3] = digit + if digit < 10 { b'0' } else { b'a' - 10 };
-    id /= 26;
-    digit = (id % 26) as u8;
+    id /= 36;
+    digit = (id % 36) as u8;
     slug[2] = digit + if digit < 10 { b'0' } else { b'a' - 10 };
-    id /= 26;
-    digit = (id % 26) as u8;
+    id /= 36;
+    digit = (id % 36) as u8;
     slug[1] = digit + if digit < 10 { b'0' } else { b'a' - 10 };
-    id /= 26;
-    digit = (id % 26) as u8;
+    id /= 36;
+    digit = (id % 36) as u8;
     slug[0] = digit + if digit < 10 { b'0' } else { b'a' - 10 };
-    id /= 26;
+    id /= 36;
     debug_assert_eq!(id, 0);
     slug
 }
