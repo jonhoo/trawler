@@ -29,7 +29,7 @@ where
 
     let mut ops = 0;
     let mut rng = rand::thread_rng();
-    let interarrival = rand::distributions::exponential::Exp::new(target * 1e-9);
+    let interarrival_ns = rand::distributions::exponential::Exp::new(target * 1e-9);
 
     let mut core = tokio_core::reactor::Core::new().unwrap();
     let mut next = time::Instant::now();
@@ -101,7 +101,7 @@ where
 
         // schedule next delivery
         use rand::distributions::IndependentSample;
-        next += time::Duration::new(0, interarrival.ind_sample(&mut rng) as u32);
+        next += time::Duration::new(0, interarrival_ns.ind_sample(&mut rng) as u32);
     }
 
     ops

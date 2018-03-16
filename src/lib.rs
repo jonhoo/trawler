@@ -43,7 +43,7 @@ use std::sync::{Arc, Barrier};
 
 pub use self::execution::MAX_IN_FLIGHT;
 
-const BASE_OPS_PER_SEC: usize = 10;
+const BASE_OPS_PER_MIN: usize = 44;
 
 // at time of writing, https://lobste.rs/recent/page/1601 is last page
 const BASE_STORIES: u32 = 25 * 1601;

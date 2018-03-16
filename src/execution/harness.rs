@@ -1,5 +1,5 @@
 use execution::{self, id_to_slug};
-use {BASE_COMMENTS, BASE_OPS_PER_SEC, BASE_STORIES, BASE_USERS};
+use {BASE_COMMENTS, BASE_OPS_PER_MIN, BASE_STORIES, BASE_USERS};
 use client::{LobstersClient, LobstersRequest};
 use std::{thread, time};
 use WorkerCommand;
@@ -24,9 +24,9 @@ where
     // generating a request takes a while because we have to generate random numbers (including
     // zipfs). so, depending on the target load, we may need more than one load generation
     // thread. we'll make them all share the pool of issuers though.
-    let mut target = BASE_OPS_PER_SEC as f64 * load.req_scale;
-    let per_generator = 10;
-    let ngen = (target as usize + per_generator - 1) / per_generator; // rounded up
+    let mut target = BASE_OPS_PER_MIN as f64 * load.req_scale / 60.0;
+    let generator_capacity = 100.0; // req/s == 10 ms/req
+    let ngen = (target / generator_capacity).ceil() as usize;
     target /= ngen as f64;
 
     let nthreads = load.threads;
