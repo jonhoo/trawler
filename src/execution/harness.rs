@@ -1,5 +1,5 @@
-use execution::{self, id_to_slug};
-use {BASE_COMMENTS, BASE_OPS_PER_MIN, BASE_STORIES, BASE_USERS};
+use execution::{self, id_to_slug, Sampler};
+use BASE_OPS_PER_MIN;
 use client::{LobstersClient, LobstersRequest};
 use std::{thread, time};
 use WorkerCommand;
@@ -56,11 +56,14 @@ where
     let barrier = Arc::new(Barrier::new(nthreads + 1));
     let now = time::Instant::now();
 
-    // first, log in all the users
-    let nusers = (load.mem_scale * BASE_USERS as f64) as u32;
+    // compute how many of each thing there will be in the database after scaling by mem_scale
+    let sampler = Sampler::new(load.mem_scale);
+    let nstories = sampler.nstories();
+
+    // then, log in all the users
     pool = core.run(
         pool.send_all(futures::stream::iter_ok(
-            (0..nusers)
+            (0..sampler.nusers())
                 .map(LobstersRequest::Login)
                 .map(|l| WorkerCommand::Request(now, l)),
         )),
@@ -79,18 +82,17 @@ where
     barrier.wait();
 
     if prime {
-        // first, we need to prime the database with BASE_STORIES stories!
-        let nstories = (load.mem_scale * BASE_STORIES as f64) as u32;
         let mut rng = rand::thread_rng();
+
+        // first, we need to prime the database stories!
         pool = core.run(
             pool.send_all(futures::stream::iter_ok(
                 (0..nstories)
                     .map(|id| {
-                        // TODO: distribution
-                        let user = rng.gen_range(0, nusers);
+                        // NOTE: we're assuming that users who vote much also submit many stories
                         LobstersRequest::Submit {
                             id: id_to_slug(id),
-                            user: user,
+                            user: sampler.user(&mut rng),
                             title: format!("Base article {}", id),
                         }
                     })
@@ -104,12 +106,10 @@ where
         barrier.wait();
 
         // and as many comments
-        let ncomments = (load.mem_scale * BASE_COMMENTS as f64) as u32;
         pool = core.run(
             pool.send_all(futures::stream::iter_ok(
-                (0..ncomments)
+                (0..sampler.ncomments())
                     .map(|id| {
-                        let user = rng.gen_range(0, nusers); // TODO: distribution
                         let story = id % nstories; // TODO: distribution
                         let parent = if rng.gen_weighted_bool(2) {
                             // we need to pick a parent in the same story
@@ -127,10 +127,11 @@ where
                             None
                         };
 
+                        // NOTE: we're assuming that users who vote much also submit many stories
                         LobstersRequest::Comment {
                             id: id_to_slug(id),
                             story: id_to_slug(story),
-                            user: user,
+                            user: sampler.user(&mut rng),
                             parent: parent.map(id_to_slug),
                         }
                     })
@@ -149,10 +150,11 @@ where
         .map(|geni| {
             let pool = pool.clone();
             let load = load.clone();
+            let sampler = sampler.clone();
 
             thread::Builder::new()
                 .name(format!("load-gen{}", geni))
-                .spawn(move || execution::generator::run::<C>(load, pool, target))
+                .spawn(move || execution::generator::run::<C>(load, sampler, pool, target))
                 .unwrap()
         })
         .collect();

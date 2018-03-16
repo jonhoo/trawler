@@ -24,6 +24,7 @@
 
 extern crate futures;
 extern crate hdrhistogram;
+extern crate histogram_sampler;
 extern crate libc;
 extern crate multiqueue;
 extern crate rand;
@@ -43,16 +44,9 @@ use std::sync::{Arc, Barrier};
 
 pub use self::execution::MAX_IN_FLIGHT;
 
+include!(concat!(env!("OUT_DIR"), "/statistics.rs"));
+
 const BASE_OPS_PER_MIN: usize = 44;
-
-// at time of writing, https://lobste.rs/recent/page/1601 is last page
-const BASE_STORIES: u32 = 25 * 1601;
-
-// wild guess
-const BASE_COMMENTS: u32 = BASE_STORIES * 7;
-
-// document.querySelectorAll(".user_tree > li").length on https://lobste.rs/u
-const BASE_USERS: u32 = 9000;
 
 #[derive(Debug, Clone)]
 enum WorkerCommand {

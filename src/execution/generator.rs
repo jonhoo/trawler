@@ -1,5 +1,4 @@
-use execution::{self, id_to_slug};
-use {BASE_COMMENTS, BASE_STORIES, BASE_USERS};
+use execution::{self, id_to_slug, Sampler};
 use client::{LobstersClient, LobstersRequest, Vote};
 use std::time;
 use WorkerCommand;
@@ -11,6 +10,7 @@ use std::sync::atomic;
 
 pub(super) fn run<C>(
     load: execution::Workload,
+    sampler: Sampler,
     mut pool: multiqueue::MPMCFutSender<WorkerCommand>,
     target: f64,
 ) -> usize
@@ -20,12 +20,12 @@ where
     let warmup = load.warmup;
     let runtime = load.runtime;
 
-    let nusers = (load.mem_scale * BASE_USERS as f64) as u32;
-    let nstories = (load.mem_scale * BASE_STORIES as f64) as u32;
-    let ncomments = (load.mem_scale * BASE_COMMENTS as f64) as u32;
-
     let start = time::Instant::now();
     let end = start + warmup + runtime;
+
+    let nstories = sampler.nstories();
+    let ncomments = sampler.ncomments();
+    let nusers = sampler.nusers();
 
     let mut ops = 0;
     let mut rng = rand::thread_rng();
@@ -34,6 +34,7 @@ where
     let mut core = tokio_core::reactor::Core::new().unwrap();
     let mut next = time::Instant::now();
     while next < end {
+        use rand::distributions::IndependentSample;
         let now = time::Instant::now();
 
         if next > now {
@@ -42,56 +43,99 @@ where
         }
 
         // randomly pick next request type based on relative frequency
-        // TODO: id distributions
-        let seed = rng.gen_range(0, 100);
-        let req = if seed < 30 {
+        let mut seed: isize = rng.gen_range(0, 100000);
+        let seed = &mut seed;
+        let mut pick = |f| {
+            let applies = *seed <= f;
+            *seed -= f;
+            applies
+        };
+
+        let req = if pick(56330) {
+            // XXX: we're assuming here that stories with more votes are viewed more
+            LobstersRequest::Story(id_to_slug(sampler.story_for_vote(&mut rng)))
+        } else if pick(29378) {
             LobstersRequest::Frontpage
-        } else if seed < 40 {
+        } else if pick(7907) {
+            // TODO: GET /u/X
+            // TODO: figure out recent fraction: https://lobste.rs/s/cqnzl5/#c_j0tokv
             LobstersRequest::Recent
-        } else if seed < 80 {
-            LobstersRequest::Story(id_to_slug(rng.gen_range(0, nstories)))
-        } else if seed < 81 {
-            LobstersRequest::Login(rng.gen_range(0, nusers))
-        } else if seed < 82 {
-            LobstersRequest::Logout(rng.gen_range(0, nusers))
-        } else if seed < 90 {
-            LobstersRequest::StoryVote(
-                rng.gen_range(0, nusers),
-                id_to_slug(rng.gen_range(0, nstories)),
-                if rng.gen_weighted_bool(2) {
-                    Vote::Up
-                } else {
-                    Vote::Down
-                },
-            )
-        } else if seed < 95 {
+        } else if pick(3575 + 953) {
+            // TODO: GET /comments
+            LobstersRequest::Recent
+        } else if pick(598) {
+            // XXX: comment_vote_sampler
             LobstersRequest::CommentVote(
-                rng.gen_range(0, nusers),
+                sampler.user(&mut rng),
                 id_to_slug(rng.gen_range(0, ncomments)),
-                if rng.gen_weighted_bool(2) {
-                    Vote::Up
-                } else {
-                    Vote::Down
-                },
+                Vote::Up,
             )
-        } else if seed < 97 {
-            // TODO: how do we pick a unique ID here?
-            let id = rng.gen_range(nstories, nstories + u16::max_value() as u32);
-            LobstersRequest::Submit {
-                id: id_to_slug(id),
-                user: rng.gen_range(0, nusers),
-                title: format!("benchmark {}", id),
-            }
-        } else {
+        } else if pick(449) {
+            LobstersRequest::StoryVote(
+                sampler.user(&mut rng),
+                id_to_slug(sampler.story_for_vote(&mut rng)),
+                Vote::Up,
+            )
+        } else if pick(305) {
+            // comments without a parent
             // TODO: how do we pick a unique ID here?
             let id = rng.gen_range(ncomments, ncomments + u16::max_value() as u32);
-            // TODO: sometimes pick a parent comment
+            // XXX: we're assuming that users who vote a lot also comment a lot
             LobstersRequest::Comment {
                 id: id_to_slug(id),
-                user: rng.gen_range(0, nusers),
-                story: id_to_slug(rng.gen_range(0, nstories)),
+                user: sampler.user(&mut rng),
+                story: id_to_slug(sampler.story_for_comment(&mut rng)),
                 parent: None,
             }
+        } else if pick(227) {
+            // TODO: GET /login
+            LobstersRequest::Recent
+        } else if pick(82) {
+            LobstersRequest::Login(rng.gen_range(0, nusers))
+        } else if pick(65) {
+            // comments with a parent
+            // TODO: how do we pick a unique ID here?
+            let id = rng.gen_range(ncomments, ncomments + u16::max_value() as u32);
+            let story = sampler.story_for_comment(&mut rng);
+            // we need to pick a comment that's on the chosen story
+            // we know that every nth comment from prepopulation is to the same story
+            let comments_per_story = ncomments / nstories;
+            let parent = story + nstories * rng.gen_range(0, comments_per_story);
+            // XXX: we're assuming that users who vote a lot also comment a lot
+            LobstersRequest::Comment {
+                id: id_to_slug(id),
+                user: sampler.user(&mut rng),
+                story: id_to_slug(story),
+                parent: Some(id_to_slug(parent)),
+            }
+        } else if pick(51) {
+            // TODO: how do we pick a unique ID here?
+            let id = rng.gen_range(nstories, nstories + u16::max_value() as u32);
+            // XXX: we're assuming that users who vote a lot also submit many stories
+            LobstersRequest::Submit {
+                id: id_to_slug(id),
+                user: sampler.user(&mut rng),
+                title: format!("benchmark {}", id),
+            }
+        } else if pick(43) {
+            // XXX: comment_vote_sampler
+            LobstersRequest::CommentVote(
+                sampler.user(&mut rng),
+                id_to_slug(rng.gen_range(0, ncomments)),
+                Vote::Down,
+            )
+        } else if pick(20) {
+            // XXX: POST /stories/X
+            LobstersRequest::Recent
+        } else if pick(17) {
+            LobstersRequest::StoryVote(
+                sampler.user(&mut rng),
+                id_to_slug(sampler.story_for_vote(&mut rng)),
+                Vote::Down,
+            )
+        } else {
+            // basically never
+            LobstersRequest::Logout(rng.gen_range(0, nusers))
         };
 
         let issued = next;
@@ -100,7 +144,6 @@ where
         ops += 1;
 
         // schedule next delivery
-        use rand::distributions::IndependentSample;
         next += time::Duration::new(0, interarrival_ns.ind_sample(&mut rng) as u32);
     }
 
