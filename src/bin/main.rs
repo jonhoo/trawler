@@ -197,7 +197,7 @@ impl trawler::LobstersClient for WebClient {
                 let mut s = url::form_urlencoded::Serializer::new(String::new());
                 s.append_pair("commit", "Submit");
                 s.append_pair("story[short_id]", ::std::str::from_utf8(&id[..]).unwrap());
-                s.append_pair("story[tags_a][]", "benchmark");
+                s.append_pair("story[tags_a][]", "test");
                 s.append_pair("story[title]", &title);
                 s.append_pair("story[description]", "to infinity");
                 s.append_pair("utf8", "✓");
