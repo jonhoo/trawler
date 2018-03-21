@@ -25,7 +25,7 @@ where
     // zipfs). so, depending on the target load, we may need more than one load generation
     // thread. we'll make them all share the pool of issuers though.
     let mut target = BASE_OPS_PER_MIN as f64 * load.req_scale / 60.0;
-    let generator_capacity = 100.0; // req/s == 10 ms/req
+    let generator_capacity = 100_000.0; // req/s == 10 µs to generate a request
     let ngen = (target / generator_capacity).ceil() as usize;
     target /= ngen as f64;
 
