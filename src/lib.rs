@@ -187,6 +187,10 @@ impl<'a> WorkloadBuilder<'a> {
         // all done!
         let took = start.elapsed();
         println!(
+            "# requested ops/s: {:.2}",
+            BASE_OPS_PER_MIN as f64 * self.load.req_scale / 60.0,
+        );
+        println!(
             "# actual ops/s: {:.2}",
             ops as f64 / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
         );
