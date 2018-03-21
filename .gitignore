@@ -1,3 +1,4 @@
+/plot-*
 /test.sh
 /target/
 **/*.rs.bk
