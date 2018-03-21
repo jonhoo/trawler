@@ -11,6 +11,7 @@ use multiqueue;
 
 pub(crate) fn run<C, I>(
     load: execution::Workload,
+    in_flight: usize,
     factory: I,
     prime: bool,
 ) -> (
@@ -44,7 +45,7 @@ where
                     let core = tokio_core::reactor::Core::new().unwrap();
                     let c = C::spawn(&mut *factory.lock().unwrap(), &core.handle());
 
-                    execution::issuer::run(warmup, core, c, jobs)
+                    execution::issuer::run(warmup, in_flight, core, c, jobs)
                     // NOTE: there may still be a bunch of requests in the queue here,
                     // but core.run() will return when the stream is closed.
                 })

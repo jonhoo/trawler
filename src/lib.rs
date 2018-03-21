@@ -42,8 +42,6 @@ use std::fs;
 use std::time;
 use std::sync::{Arc, Barrier};
 
-pub use self::execution::MAX_IN_FLIGHT;
-
 include!(concat!(env!("OUT_DIR"), "/statistics.rs"));
 
 const BASE_OPS_PER_MIN: usize = 44;
@@ -58,6 +56,7 @@ enum WorkerCommand {
 pub struct WorkloadBuilder<'a> {
     load: execution::Workload,
     histogram_file: Option<&'a str>,
+    max_in_flight: usize,
 }
 
 impl<'a> Default for WorkloadBuilder<'a> {
@@ -73,6 +72,7 @@ impl<'a> Default for WorkloadBuilder<'a> {
                 runtime: time::Duration::from_secs(30),
             },
             histogram_file: None,
+            max_in_flight: 20,
         }
     }
 }
@@ -93,7 +93,7 @@ impl<'a> WorkloadBuilder<'a> {
 
     /// Set the number of threads used to issue requests to the backend.
     ///
-    /// Each thread can issue [`MAX_IN_FLIGHT`] requests simultaneously.
+    /// Each thread can issue `in_flight` requests simultaneously.
     pub fn issuers(&mut self, n: usize) -> &mut Self {
         self.load.threads = n;
         self
@@ -103,6 +103,13 @@ impl<'a> WorkloadBuilder<'a> {
     pub fn time(&mut self, warmup: time::Duration, runtime: time::Duration) -> &mut Self {
         self.load.warmup = warmup;
         self.load.runtime = runtime;
+        self
+    }
+
+    /// The maximum number of outstanding request any single issuer is allowed to have to the
+    /// backend. Defaults to 20.
+    pub fn in_flight(&mut self, max: usize) -> &mut Self {
+        self.max_in_flight = max;
         self
     }
 
@@ -164,7 +171,8 @@ impl<'a> WorkloadBuilder<'a> {
 
         // actually run the workload
         let start = time::Instant::now();
-        let (workers, ops) = execution::harness::run::<C, _>(self.load.clone(), factory, prime);
+        let (workers, ops) =
+            execution::harness::run::<C, _>(self.load.clone(), self.max_in_flight, factory, prime);
 
         for w in workers {
             let (sjrn, rmt) = w.join().unwrap();

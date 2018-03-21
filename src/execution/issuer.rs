@@ -1,6 +1,3 @@
-/// The maximum number of outstanding request any single issuer is allowed to have to the backend.
-pub const MAX_IN_FLIGHT: usize = 20;
-
 use execution::Stats;
 use client::LobstersClient;
 use futures::{Future, Stream};
@@ -15,6 +12,7 @@ use multiqueue;
 
 pub(super) fn run<C>(
     warmup: time::Duration,
+    max_in_flight: usize,
     mut core: tokio_core::reactor::Core,
     client: C,
     mut jobs: multiqueue::MPMCFutReceiver<WorkerCommand>,
@@ -49,7 +47,7 @@ where
             WorkerCommand::Request(issued, request) => {
                 // ensure we don't have too many requests in flight at the same time
                 {
-                    while *in_flight.borrow_mut() >= MAX_IN_FLIGHT {
+                    while *in_flight.borrow_mut() >= max_in_flight {
                         core.turn(None);
                     }
                     *in_flight.borrow_mut() += 1;
