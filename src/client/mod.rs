@@ -137,25 +137,25 @@ use std::vec;
 impl LobstersRequest {
     pub(crate) fn all() -> vec::IntoIter<mem::Discriminant<Self>> {
         vec![
-            mem::discriminant(&LobstersRequest::Frontpage),
-            mem::discriminant(&LobstersRequest::Recent),
-            mem::discriminant(&LobstersRequest::User(0)),
             mem::discriminant(&LobstersRequest::Story([0; 6])),
-            mem::discriminant(&LobstersRequest::Login(0)),
-            mem::discriminant(&LobstersRequest::Logout(0)),
-            mem::discriminant(&LobstersRequest::StoryVote(0, [0; 6], Vote::Up)),
+            mem::discriminant(&LobstersRequest::Frontpage),
+            mem::discriminant(&LobstersRequest::User(0)),
+            mem::discriminant(&LobstersRequest::Recent),
             mem::discriminant(&LobstersRequest::CommentVote(0, [0; 6], Vote::Up)),
-            mem::discriminant(&LobstersRequest::Submit {
-                id: [0; 6],
-                user: 0,
-                title: String::new(),
-            }),
+            mem::discriminant(&LobstersRequest::StoryVote(0, [0; 6], Vote::Up)),
             mem::discriminant(&LobstersRequest::Comment {
                 id: [0; 6],
                 user: 0,
                 story: [0; 6],
                 parent: None,
             }),
+            mem::discriminant(&LobstersRequest::Login(0)),
+            mem::discriminant(&LobstersRequest::Submit {
+                id: [0; 6],
+                user: 0,
+                title: String::new(),
+            }),
+            mem::discriminant(&LobstersRequest::Logout(0)),
         ].into_iter()
     }
 
