@@ -127,6 +127,15 @@ impl trawler::LobstersClient for WebClient {
                     hyper::Uri::from_str(this.prefix.join("recent").unwrap().as_ref()).unwrap();
                 hyper::Request::new(hyper::Method::Get, url)
             }
+            LobstersRequest::User(uid) => {
+                let url = hyper::Uri::from_str(
+                    this.prefix
+                        .join(&format!("u/user{}", uid))
+                        .unwrap()
+                        .as_ref(),
+                ).unwrap();
+                hyper::Request::new(hyper::Method::Get, url)
+            }
             LobstersRequest::Login(uid) => {
                 return Box::new(
                     WebClient::get_cookie_for(this.clone(), uid)

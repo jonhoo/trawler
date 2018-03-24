@@ -57,11 +57,11 @@ where
         } else if pick(29378) {
             LobstersRequest::Frontpage
         } else if pick(7907) {
-            // TODO: GET /u/X
-            // TODO: figure out recent fraction: https://lobste.rs/s/cqnzl5/#c_j0tokv
-            LobstersRequest::Recent
+            // XXX: we're assuming that users who vote a lot are also "popular"
+            LobstersRequest::User(sampler.user(&mut rng))
         } else if pick(3575 + 953) {
             // TODO: GET /comments
+            // TODO: figure out recent fraction: https://lobste.rs/s/cqnzl5/#c_j0tokv
             LobstersRequest::Recent
         } else if pick(598) {
             // XXX: comment_vote_sampler
@@ -125,8 +125,8 @@ where
                 Vote::Down,
             )
         } else if pick(20) {
-            // XXX: POST /stories/X
-            LobstersRequest::Recent
+            // XXX: POST /stories/X == edit story
+            LobstersRequest::Story(id_to_slug(sampler.story_for_vote(&mut rng)))
         } else if pick(17) {
             LobstersRequest::StoryVote(
                 sampler.user(&mut rng),

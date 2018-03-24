@@ -33,6 +33,15 @@ pub type StoryId = [u8; 6];
 pub type CommentId = [u8; 6];
 
 /// A unique lobste.rs user id.
+///
+/// Implementors should have a reliable mapping betwen user id and username in both directions.
+/// This type is used both in the context of a username (e.g., /u/<user>) and in the context of who
+/// performed an action (e.g., POST /s/ as <user>). In the former case, <user> is a username, and
+/// the database will have to do a lookup based on username. In the latter, the user id is
+/// associated with some session, and the backend does not need to do a lookup.
+///
+/// In the future, it is likely that this type will be split into two types: one for "session key" and
+/// one for "username", both of which will require lookups, but on different keys.
 pub type UserId = u32;
 
 /// An up or down vote.
@@ -57,13 +66,20 @@ pub enum LobstersRequest {
     /// Render [recently submitted stories](https://lobste.rs/recent).
     Recent,
 
+    /// Render a [user's profile](https://lobste.rs/u/jonhoo).
+    ///
+    /// Note that the id here should be treated as a username.
+    User(UserId),
+
     /// Render a [particular story](https://lobste.rs/s/cqnzl5/).
     Story(StoryId),
 
     /// Log in the given user.
     ///
     /// Note that a user need not be logged in by a `LobstersRequest` in order for a user-action
-    /// (like `LobstersRequest::Submit`) to be issued for that user.
+    /// (like `LobstersRequest::Submit`) to be issued for that user. The id here should be
+    /// considered *both* a username *and* an id. The user with the username derived from this id
+    /// should have the given id.
     Login(UserId),
 
     /// Log out the given user.
@@ -123,6 +139,7 @@ impl LobstersRequest {
         vec![
             mem::discriminant(&LobstersRequest::Frontpage),
             mem::discriminant(&LobstersRequest::Recent),
+            mem::discriminant(&LobstersRequest::User(0)),
             mem::discriminant(&LobstersRequest::Story([0; 6])),
             mem::discriminant(&LobstersRequest::Login(0)),
             mem::discriminant(&LobstersRequest::Logout(0)),
@@ -149,6 +166,7 @@ impl LobstersRequest {
         match *v {
             d if d == mem::discriminant(&LobstersRequest::Frontpage) => "Frontpage",
             d if d == mem::discriminant(&LobstersRequest::Recent) => "Recent",
+            d if d == mem::discriminant(&LobstersRequest::User(0)) => "User",
             d if d == mem::discriminant(&LobstersRequest::Story([0; 6])) => "Story",
             d if d == mem::discriminant(&LobstersRequest::Login(0)) => "Login",
             d if d == mem::discriminant(&LobstersRequest::Logout(0)) => "Logout",
