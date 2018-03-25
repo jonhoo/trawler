@@ -196,4 +196,135 @@ impl LobstersRequest {
             _ => unreachable!(),
         }
     }
+
+    /// Produce a textual representation of this request.
+    ///
+    /// These are on the form:
+    ///
+    /// ```text
+    /// METHOD /path [params] <user>
+    /// ```
+    ///
+    /// Where:
+    ///
+    ///  - `METHOD` is `GET` or `POST`.
+    ///  - `/path` is the approximate lobste.rs URL endpoint for the request.
+    ///  - `[params]` are any additional params to the request such as id to assign or associate a
+    ///    new resource with with.
+    ///  - `<user>` is the user performing the action, if any.
+    pub fn describe(&self) -> String {
+        match *self {
+            LobstersRequest::Frontpage => String::from("GET /"),
+            LobstersRequest::Recent => String::from("GET /recent"),
+            LobstersRequest::User(uid) => format!("GET /u/#{}", uid),
+            LobstersRequest::Story(ref slug) => {
+                format!("GET /s/{}", ::std::str::from_utf8(&slug[..]).unwrap())
+            }
+            LobstersRequest::Login(uid) => format!("POST /login <{}>", uid),
+            LobstersRequest::Logout(uid) => format!("POST /logout <{}>", uid),
+            LobstersRequest::StoryVote(uid, ref story, v) => format!(
+                "POST /stories/{}/{} <{}>",
+                ::std::str::from_utf8(&story[..]).unwrap(),
+                match v {
+                    Vote::Up => "upvote",
+                    Vote::Down => "downvote",
+                },
+                uid
+            ),
+            LobstersRequest::CommentVote(uid, ref comment, v) => format!(
+                "POST /comments/{}/{} <{}>",
+                ::std::str::from_utf8(&comment[..]).unwrap(),
+                match v {
+                    Vote::Up => "upvote",
+                    Vote::Down => "downvote",
+                },
+                uid
+            ),
+            LobstersRequest::Submit { ref id, user, .. } => format!(
+                "POST /stories [{}] <{}>",
+                ::std::str::from_utf8(&id[..]).unwrap(),
+                user
+            ),
+            LobstersRequest::Comment {
+                ref id,
+                user,
+                ref story,
+                ref parent,
+            } => match *parent {
+                Some(ref parent) => format!(
+                    "POST /comments/{} [{}; {}] <{}>",
+                    ::std::str::from_utf8(&parent[..]).unwrap(),
+                    ::std::str::from_utf8(&id[..]).unwrap(),
+                    ::std::str::from_utf8(&story[..]).unwrap(),
+                    user
+                ),
+                None => format!(
+                    "POST /comments [{}; {}] <{}>",
+                    ::std::str::from_utf8(&id[..]).unwrap(),
+                    ::std::str::from_utf8(&story[..]).unwrap(),
+                    user
+                ),
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn textual_requests() {
+        assert_eq!(LobstersRequest::Frontpage.describe(), "GET /");
+        assert_eq!(LobstersRequest::Recent.describe(), "GET /recent");
+        assert_eq!(LobstersRequest::User(3).describe(), "GET /u/#3");
+        assert_eq!(
+            LobstersRequest::Story([48, 48, 48, 48, 57, 97]).describe(),
+            "GET /s/00009a"
+        );
+        assert_eq!(LobstersRequest::Login(3).describe(), "POST /login <3>");
+        assert_eq!(LobstersRequest::Logout(3).describe(), "POST /logout <3>");
+        assert_eq!(
+            LobstersRequest::StoryVote(3, [48, 48, 48, 98, 57, 97], Vote::Up).describe(),
+            "POST /stories/000b9a/upvote <3>"
+        );
+        assert_eq!(
+            LobstersRequest::StoryVote(3, [48, 48, 48, 98, 57, 97], Vote::Down).describe(),
+            "POST /stories/000b9a/downvote <3>"
+        );
+        assert_eq!(
+            LobstersRequest::CommentVote(3, [48, 48, 48, 98, 57, 97], Vote::Up).describe(),
+            "POST /comments/000b9a/upvote <3>"
+        );
+        assert_eq!(
+            LobstersRequest::CommentVote(3, [48, 48, 48, 98, 57, 97], Vote::Down).describe(),
+            "POST /comments/000b9a/downvote <3>"
+        );
+        assert_eq!(
+            LobstersRequest::Submit {
+                id: [48, 48, 48, 48, 57, 97],
+                user: 3,
+                title: String::from("foo"),
+            }.describe(),
+            "POST /stories [00009a] <3>"
+        );
+        assert_eq!(
+            LobstersRequest::Comment {
+                id: [48, 48, 48, 48, 57, 97],
+                user: 3,
+                story: [48, 48, 48, 48, 57, 98],
+                parent: Some([48, 48, 48, 48, 57, 99]),
+            }.describe(),
+            "POST /comments/00009c [00009a; 00009b] <3>"
+        );
+        assert_eq!(
+            LobstersRequest::Comment {
+                id: [48, 48, 48, 48, 57, 97],
+                user: 3,
+                story: [48, 48, 48, 48, 57, 98],
+                parent: None,
+            }.describe(),
+            "POST /comments [00009a; 00009b] <3>"
+        );
+    }
 }
