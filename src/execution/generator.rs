@@ -1,4 +1,4 @@
-use execution::{self, id_to_slug, Sampler};
+use execution::{self, id_to_slug, Sampler, MAX_SLUGGABLE_ID};
 use client::{LobstersClient, LobstersRequest, Vote};
 use std::time;
 use WorkerCommand;
@@ -78,8 +78,7 @@ where
             )
         } else if pick(305) {
             // comments without a parent
-            // TODO: how do we pick a unique ID here?
-            let id = rng.gen_range(ncomments, ncomments + u16::max_value() as u32);
+            let id = rng.gen_range(ncomments, MAX_SLUGGABLE_ID);
             // XXX: we're assuming that users who vote a lot also comment a lot
             LobstersRequest::Comment {
                 id: id_to_slug(id),
@@ -94,8 +93,7 @@ where
             LobstersRequest::Login(rng.gen_range(0, nusers))
         } else if pick(65) {
             // comments with a parent
-            // TODO: how do we pick a unique ID here?
-            let id = rng.gen_range(ncomments, ncomments + u16::max_value() as u32);
+            let id = rng.gen_range(ncomments, MAX_SLUGGABLE_ID);
             let story = sampler.story_for_comment(&mut rng);
             // we need to pick a comment that's on the chosen story
             // we know that every nth comment from prepopulation is to the same story
@@ -109,8 +107,7 @@ where
                 parent: Some(id_to_slug(parent)),
             }
         } else if pick(51) {
-            // TODO: how do we pick a unique ID here?
-            let id = rng.gen_range(nstories, nstories + u16::max_value() as u32);
+            let id = rng.gen_range(nstories, MAX_SLUGGABLE_ID);
             // XXX: we're assuming that users who vote a lot also submit many stories
             LobstersRequest::Submit {
                 id: id_to_slug(id),

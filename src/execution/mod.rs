@@ -76,6 +76,8 @@ impl Sampler {
     }
 }
 
+const MAX_SLUGGABLE_ID: u32 = 2176782336; // 36 ^ 6;
+
 #[inline]
 fn id_to_slug(mut id: u32) -> [u8; 6] {
     // convert id to unique string
