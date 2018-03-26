@@ -107,6 +107,8 @@ where
                 while *in_flight.borrow_mut() > 0 {
                     core.turn(None);
                 }
+                // drain the channel so we don't block the load generators
+                core.run(jobs.filter(|_| false).collect()).unwrap();
                 break;
             }
         }
