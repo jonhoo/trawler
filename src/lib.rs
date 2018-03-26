@@ -49,6 +49,7 @@ const BASE_OPS_PER_MIN: usize = 44;
 #[derive(Debug, Clone)]
 enum WorkerCommand {
     Request(time::Instant, LobstersRequest),
+    Start(Arc<Barrier>),
     Wait(Arc<Barrier>),
 }
 

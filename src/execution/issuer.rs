@@ -12,6 +12,7 @@ use multiqueue;
 
 pub(super) fn run<C>(
     warmup: time::Duration,
+    runtime: time::Duration,
     max_in_flight: usize,
     mut core: tokio_core::reactor::Core,
     client: C,
@@ -20,10 +21,11 @@ pub(super) fn run<C>(
 where
     C: LobstersClient,
 {
-    let mut start = time::Instant::now();
+    let mut start = None;
     let client = Rc::new(client);
     let in_flight = Rc::new(RefCell::new(0));
     let handle = core.handle();
+    let end = warmup + runtime;
 
     let sjrn = Rc::new(RefCell::new(HashMap::default()));
     let rmt = Rc::new(RefCell::new(HashMap::default()));
@@ -41,8 +43,17 @@ where
                 }
 
                 barrier.wait();
+            }
+            WorkerCommand::Start(barrier) => {
+                {
+                    while *in_flight.borrow_mut() > 0 {
+                        core.turn(None);
+                    }
+                }
+
+                barrier.wait();
                 // start should be set to the first time after priming has finished
-                start = time::Instant::now();
+                start = Some(time::Instant::now());
             }
             WorkerCommand::Request(issued, request) => {
                 // ensure we don't have too many requests in flight at the same time
@@ -59,8 +70,12 @@ where
                 let variant = mem::discriminant(&request);
                 handle.spawn(C::handle(client.clone(), request).map(move |remote_t| {
                     *in_flight.borrow_mut() -= 1;
-                    // start < issued for priming (Login in particular)
-                    if issued >= start && issued.duration_since(start) > warmup {
+                    if start.is_none() {
+                        return;
+                    }
+
+                    let start = start.unwrap();
+                    if issued.duration_since(start) > warmup {
                         let sjrn_t = issued.elapsed();
 
                         rmt.borrow_mut()
@@ -82,6 +97,17 @@ where
                             );
                     }
                 }));
+            }
+        }
+
+        if let Some(start) = start {
+            if start.elapsed() > end {
+                // we're past the end of the experiments and should exit cleanly.
+                // ignore anything left in the queue, and just finish up our current work.
+                while *in_flight.borrow_mut() > 0 {
+                    core.turn(None);
+                }
+                break;
             }
         }
     }

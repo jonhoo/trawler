@@ -32,6 +32,7 @@ where
 
     let nthreads = load.threads;
     let warmup = load.warmup;
+    let runtime = load.runtime;
 
     let factory = Arc::new(Mutex::new(factory));
     let (mut pool, jobs) = multiqueue::mpmc_fut_queue(0);
@@ -45,7 +46,7 @@ where
                     let core = tokio_core::reactor::Core::new().unwrap();
                     let c = C::spawn(&mut *factory.lock().unwrap(), &core.handle());
 
-                    execution::issuer::run(warmup, in_flight, core, c, jobs)
+                    execution::issuer::run(warmup, runtime, in_flight, core, c, jobs)
                     // NOTE: there may still be a bunch of requests in the queue here,
                     // but core.run() will return when the stream is closed.
                 })
@@ -71,20 +72,20 @@ where
     ).unwrap()
         .0;
 
-    // wait for all threads to be ready (and set their start time correctly)
-    // we don't normally know which worker thread will receive any given command (it's mpmc
-    // after all), but since a ::Wait causes the receiving thread to *block*, we know that once
-    // it receives one, it can't receive another until the barrier has been passed! Therefore,
-    // sending `nthreads` barriers should ensure that every thread gets one
-    pool = core.run(pool.send_all(futures::stream::iter_ok(
-        (0..nthreads).map(|_| WorkerCommand::Wait(barrier.clone())),
-    ))).unwrap()
-        .0;
-    barrier.wait();
-
     if prime {
         println!("--> priming database");
         let mut rng = rand::thread_rng();
+
+        // wait for all threads to be ready
+        // we don't normally know which worker thread will receive any given command (it's mpmc
+        // after all), but since a ::Wait causes the receiving thread to *block*, we know that once
+        // it receives one, it can't receive another until the barrier has been passed! Therefore,
+        // sending `nthreads` barriers should ensure that every thread gets one
+        pool = core.run(pool.send_all(futures::stream::iter_ok(
+            (0..nthreads).map(|_| WorkerCommand::Wait(barrier.clone())),
+        ))).unwrap()
+            .0;
+        barrier.wait();
 
         // first, we need to prime the database stories!
         pool = core.run(
@@ -148,6 +149,13 @@ where
         barrier.wait();
         println!("--> finished priming database");
     }
+
+    // wait for all threads to be ready (and set their start time correctly)
+    pool = core.run(pool.send_all(futures::stream::iter_ok(
+        (0..nthreads).map(|_| WorkerCommand::Start(barrier.clone())),
+    ))).unwrap()
+        .0;
+    barrier.wait();
 
     let generators: Vec<_> = (0..ngen)
         .map(|geni| {
