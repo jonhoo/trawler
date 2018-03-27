@@ -13,11 +13,11 @@ use clap::{App, Arg};
 use futures::Future;
 use trawler::{LobstersRequest, Vote};
 
-use std::time;
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::rc::Rc;
+use std::str::FromStr;
 use std::sync::RwLock;
+use std::time;
 
 lazy_static! {
     static ref SESSION_COOKIES: RwLock<HashMap<u32, hyper::header::Cookie>> = RwLock::default();

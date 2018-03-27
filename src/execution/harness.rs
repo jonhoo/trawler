@@ -1,13 +1,13 @@
-use execution::{self, id_to_slug, Sampler};
 use BASE_OPS_PER_MIN;
-use client::{LobstersClient, LobstersRequest};
-use std::{thread, time};
 use WorkerCommand;
+use client::{LobstersClient, LobstersRequest};
+use execution::{self, id_to_slug, Sampler};
 use futures::{self, Sink};
+use multiqueue;
 use rand::{self, Rng};
 use std::sync::{Arc, Barrier, Mutex};
+use std::{thread, time};
 use tokio_core;
-use multiqueue;
 
 pub(crate) fn run<C, I>(
     load: execution::Workload,

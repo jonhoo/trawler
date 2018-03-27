@@ -1,7 +1,7 @@
 use futures;
-use tokio_core;
-use std::time;
 use std::rc::Rc;
+use std::time;
+use tokio_core;
 
 /// Implementors of this trait handle [`LobstersRequest`] that correspond to "real" lobste.rs
 /// website requests queued up by the workload generator.

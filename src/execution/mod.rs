@@ -1,8 +1,8 @@
-use std::{mem, time};
-use std::collections::HashMap;
-use hdrhistogram::Histogram;
 use LobstersRequest;
+use hdrhistogram::Histogram;
 use histogram_sampler;
+use std::collections::HashMap;
+use std::{mem, time};
 use {COMMENTS_PER_STORY, VOTES_PER_COMMENT, VOTES_PER_STORY, VOTES_PER_USER};
 
 type Stats = HashMap<mem::Discriminant<LobstersRequest>, Histogram<u64>>;
@@ -106,6 +106,6 @@ pub(crate) struct Workload {
     pub(crate) runtime: time::Duration,
 }
 
-pub(crate) mod issuer;
 pub(crate) mod generator;
 pub(crate) mod harness;
+pub(crate) mod issuer;

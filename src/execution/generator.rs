@@ -1,12 +1,12 @@
-use execution::{self, id_to_slug, Sampler, MAX_SLUGGABLE_ID};
-use client::{LobstersClient, LobstersRequest, Vote};
-use std::time;
 use WorkerCommand;
+use client::{LobstersClient, LobstersRequest, Vote};
+use execution::{self, id_to_slug, Sampler, MAX_SLUGGABLE_ID};
 use futures::Sink;
-use rand::{self, Rng};
-use tokio_core;
 use multiqueue;
+use rand::{self, Rng};
 use std::sync::atomic;
+use std::time;
+use tokio_core;
 
 pub(super) fn run<C>(
     load: execution::Workload,

@@ -39,8 +39,8 @@ mod execution;
 use hdrhistogram::Histogram;
 use std::collections::HashMap;
 use std::fs;
-use std::time;
 use std::sync::{Arc, Barrier};
+use std::time;
 
 include!(concat!(env!("OUT_DIR"), "/statistics.rs"));
 

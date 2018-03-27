@@ -1,14 +1,14 @@
-use execution::Stats;
-use client::LobstersClient;
-use futures::{Future, Stream};
-use std::collections::HashMap;
 use WorkerCommand;
+use client::LobstersClient;
+use execution::Stats;
+use futures::{Future, Stream};
 use hdrhistogram::Histogram;
+use multiqueue;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 use std::{mem, time};
 use tokio_core;
-use std::cell::RefCell;
-use std::rc::Rc;
-use multiqueue;
 
 pub(super) fn run<C>(
     warmup: time::Duration,
