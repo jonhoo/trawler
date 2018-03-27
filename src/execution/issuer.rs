@@ -68,14 +68,15 @@ where
                 let sjrn = sjrn.clone();
                 let rmt = rmt.clone();
                 let variant = mem::discriminant(&request);
-                handle.spawn(C::handle(client.clone(), request).map(move |remote_t| {
+                handle.spawn(C::handle(client.clone(), request).then(move |remote_t| {
                     *in_flight.borrow_mut() -= 1;
                     if start.is_none() {
-                        return;
+                        return Ok(());
                     }
 
                     let start = start.unwrap();
-                    if issued.duration_since(start) > warmup {
+                    if remote_t.is_ok() && issued.duration_since(start) > warmup {
+                        let remote_t = remote_t.unwrap();
                         let sjrn_t = issued.elapsed();
 
                         rmt.borrow_mut()
@@ -96,6 +97,8 @@ where
                                 sjrn_t.as_secs() * 1_000 + sjrn_t.subsec_nanos() as u64 / 1_000_000,
                             );
                     }
+
+                    Ok(())
                 }));
             }
         }
