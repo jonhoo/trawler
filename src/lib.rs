@@ -44,7 +44,9 @@ use std::sync::{Arc, Barrier};
 
 include!(concat!(env!("OUT_DIR"), "/statistics.rs"));
 
-const BASE_OPS_PER_MIN: usize = 44;
+/// There were 2893183 relevant requests in the 63166 minutes between 2018-02-11 04:40:31 and
+/// 2018-03-27 01:26:49 according to https://lobste.rs/s/cqnzl5/#c_jz5hqv.
+pub const BASE_OPS_PER_MIN: usize = 46;
 
 #[derive(Debug, Clone)]
 enum WorkerCommand {

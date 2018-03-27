@@ -51,31 +51,32 @@ where
             applies
         };
 
-        let req = if pick(56330) {
+        let req = if pick(55842) {
             // XXX: we're assuming here that stories with more votes are viewed more
             LobstersRequest::Story(id_to_slug(sampler.story_for_vote(&mut rng)))
-        } else if pick(29378) {
+        } else if pick(30105) {
             LobstersRequest::Frontpage
-        } else if pick(7907) {
+        } else if pick(6702) {
             // XXX: we're assuming that users who vote a lot are also "popular"
             LobstersRequest::User(sampler.user(&mut rng))
-        } else if pick(3575 + 953) {
+        } else if pick(4674) {
             // TODO: GET /comments
-            // TODO: figure out recent fraction: https://lobste.rs/s/cqnzl5/#c_j0tokv
+            LobstersRequest::Frontpage
+        } else if pick(967) {
             LobstersRequest::Recent
-        } else if pick(598) {
+        } else if pick(630) {
             LobstersRequest::CommentVote(
                 sampler.user(&mut rng),
                 id_to_slug(sampler.comment_for_vote(&mut rng)),
                 Vote::Up,
             )
-        } else if pick(449) {
+        } else if pick(475) {
             LobstersRequest::StoryVote(
                 sampler.user(&mut rng),
                 id_to_slug(sampler.story_for_vote(&mut rng)),
                 Vote::Up,
             )
-        } else if pick(305) {
+        } else if pick(316) {
             // comments without a parent
             let id = rng.gen_range(ncomments, MAX_SLUGGABLE_ID);
             // XXX: we're assuming that users who vote a lot also comment a lot
@@ -85,12 +86,9 @@ where
                 story: id_to_slug(sampler.story_for_comment(&mut rng)),
                 parent: None,
             }
-        } else if pick(227) {
-            // TODO: GET /login
-            LobstersRequest::Recent
-        } else if pick(82) {
+        } else if pick(87) {
             LobstersRequest::Login(rng.gen_range(0, nusers))
-        } else if pick(65) {
+        } else if pick(71) {
             // comments with a parent
             let id = rng.gen_range(ncomments, MAX_SLUGGABLE_ID);
             let story = sampler.story_for_comment(&mut rng);
@@ -105,7 +103,13 @@ where
                 story: id_to_slug(story),
                 parent: Some(id_to_slug(parent)),
             }
-        } else if pick(51) {
+        } else if pick(54) {
+            LobstersRequest::CommentVote(
+                sampler.user(&mut rng),
+                id_to_slug(sampler.comment_for_vote(&mut rng)),
+                Vote::Down,
+            )
+        } else if pick(53) {
             let id = rng.gen_range(nstories, MAX_SLUGGABLE_ID);
             // XXX: we're assuming that users who vote a lot also submit many stories
             LobstersRequest::Submit {
@@ -113,23 +117,14 @@ where
                 user: sampler.user(&mut rng),
                 title: format!("benchmark {}", id),
             }
-        } else if pick(43) {
-            LobstersRequest::CommentVote(
-                sampler.user(&mut rng),
-                id_to_slug(sampler.comment_for_vote(&mut rng)),
-                Vote::Down,
-            )
-        } else if pick(20) {
-            // XXX: POST /stories/X == edit story
-            LobstersRequest::Story(id_to_slug(sampler.story_for_vote(&mut rng)))
-        } else if pick(17) {
+        } else if pick(21) {
             LobstersRequest::StoryVote(
                 sampler.user(&mut rng),
                 id_to_slug(sampler.story_for_vote(&mut rng)),
                 Vote::Down,
             )
         } else {
-            // basically never
+            // ~.003%
             LobstersRequest::Logout(rng.gen_range(0, nusers))
         };
 
