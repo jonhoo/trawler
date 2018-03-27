@@ -64,10 +64,9 @@ where
             // TODO: figure out recent fraction: https://lobste.rs/s/cqnzl5/#c_j0tokv
             LobstersRequest::Recent
         } else if pick(598) {
-            // XXX: comment_vote_sampler
             LobstersRequest::CommentVote(
                 sampler.user(&mut rng),
-                id_to_slug(rng.gen_range(0, ncomments)),
+                id_to_slug(sampler.comment_for_vote(&mut rng)),
                 Vote::Up,
             )
         } else if pick(449) {
@@ -115,10 +114,9 @@ where
                 title: format!("benchmark {}", id),
             }
         } else if pick(43) {
-            // XXX: comment_vote_sampler
             LobstersRequest::CommentVote(
                 sampler.user(&mut rng),
-                id_to_slug(rng.gen_range(0, ncomments)),
+                id_to_slug(sampler.comment_for_vote(&mut rng)),
                 Vote::Down,
             )
         } else if pick(20) {
