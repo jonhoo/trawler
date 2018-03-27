@@ -135,7 +135,8 @@ pub enum LobstersRequest {
 use std::mem;
 use std::vec;
 impl LobstersRequest {
-    pub(crate) fn all() -> vec::IntoIter<mem::Discriminant<Self>> {
+    /// Enumerate all possible request types in a deterministic order.
+    pub fn all() -> vec::IntoIter<mem::Discriminant<Self>> {
         vec![
             mem::discriminant(&LobstersRequest::Story([0; 6])),
             mem::discriminant(&LobstersRequest::Frontpage),
@@ -162,7 +163,7 @@ impl LobstersRequest {
     /// Give a textual representation of the given `LobstersRequest` discriminant.
     ///
     /// Useful for printing the keys of the maps of histograms returned by `run`.
-    pub(crate) fn variant_name(v: &mem::Discriminant<Self>) -> &'static str {
+    pub fn variant_name(v: &mem::Discriminant<Self>) -> &'static str {
         match *v {
             d if d == mem::discriminant(&LobstersRequest::Frontpage) => "Frontpage",
             d if d == mem::discriminant(&LobstersRequest::Recent) => "Recent",
