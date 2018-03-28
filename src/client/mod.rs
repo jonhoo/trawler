@@ -66,6 +66,9 @@ pub enum LobstersRequest {
     /// Render [recently submitted stories](https://lobste.rs/recent).
     Recent,
 
+    /// Render [recently submitted comments](https://lobste.rs/comments).
+    Comments,
+
     /// Render a [user's profile](https://lobste.rs/u/jonhoo).
     ///
     /// Note that the id here should be treated as a username.
@@ -141,6 +144,7 @@ impl LobstersRequest {
             mem::discriminant(&LobstersRequest::Story([0; 6])),
             mem::discriminant(&LobstersRequest::Frontpage),
             mem::discriminant(&LobstersRequest::User(0)),
+            mem::discriminant(&LobstersRequest::Comments),
             mem::discriminant(&LobstersRequest::Recent),
             mem::discriminant(&LobstersRequest::CommentVote(0, [0; 6], Vote::Up)),
             mem::discriminant(&LobstersRequest::StoryVote(0, [0; 6], Vote::Up)),
@@ -167,6 +171,7 @@ impl LobstersRequest {
         match *v {
             d if d == mem::discriminant(&LobstersRequest::Frontpage) => "Frontpage",
             d if d == mem::discriminant(&LobstersRequest::Recent) => "Recent",
+            d if d == mem::discriminant(&LobstersRequest::Comments) => "Comments",
             d if d == mem::discriminant(&LobstersRequest::User(0)) => "User",
             d if d == mem::discriminant(&LobstersRequest::Story([0; 6])) => "Story",
             d if d == mem::discriminant(&LobstersRequest::Login(0)) => "Login",
@@ -217,6 +222,7 @@ impl LobstersRequest {
         match *self {
             LobstersRequest::Frontpage => String::from("GET /"),
             LobstersRequest::Recent => String::from("GET /recent"),
+            LobstersRequest::Comments => String::from("GET /comments"),
             LobstersRequest::User(uid) => format!("GET /u/#{}", uid),
             LobstersRequest::Story(ref slug) => {
                 format!("GET /s/{}", ::std::str::from_utf8(&slug[..]).unwrap())
@@ -278,6 +284,7 @@ mod tests {
     fn textual_requests() {
         assert_eq!(LobstersRequest::Frontpage.describe(), "GET /");
         assert_eq!(LobstersRequest::Recent.describe(), "GET /recent");
+        assert_eq!(LobstersRequest::Comments.describe(), "GET /comments");
         assert_eq!(LobstersRequest::User(3).describe(), "GET /u/#3");
         assert_eq!(
             LobstersRequest::Story([48, 48, 48, 48, 57, 97]).describe(),

@@ -60,8 +60,7 @@ where
             // XXX: we're assuming that users who vote a lot are also "popular"
             LobstersRequest::User(sampler.user(&mut rng))
         } else if pick(4674) {
-            // TODO: GET /comments
-            LobstersRequest::Frontpage
+            LobstersRequest::Comments
         } else if pick(967) {
             LobstersRequest::Recent
         } else if pick(630) {
