@@ -55,7 +55,7 @@ where
                 // start should be set to the first time after priming has finished
                 start = Some(time::Instant::now());
             }
-            WorkerCommand::Request(issued, request) => {
+            WorkerCommand::Request(issued, user, request) => {
                 // ensure we don't have too many requests in flight at the same time
                 {
                     while *in_flight.borrow_mut() >= max_in_flight {
@@ -68,38 +68,41 @@ where
                 let sjrn = sjrn.clone();
                 let rmt = rmt.clone();
                 let variant = mem::discriminant(&request);
-                handle.spawn(C::handle(client.clone(), request).then(move |remote_t| {
-                    *in_flight.borrow_mut() -= 1;
-                    if start.is_none() {
-                        return Ok(());
-                    }
+                handle.spawn(
+                    C::handle(client.clone(), user, request).then(move |remote_t| {
+                        *in_flight.borrow_mut() -= 1;
+                        if start.is_none() {
+                            return Ok(());
+                        }
 
-                    let start = start.unwrap();
-                    if remote_t.is_ok() && issued.duration_since(start) > warmup {
-                        let remote_t = remote_t.unwrap();
-                        let sjrn_t = issued.elapsed();
+                        let start = start.unwrap();
+                        if remote_t.is_ok() && issued.duration_since(start) > warmup {
+                            let remote_t = remote_t.unwrap();
+                            let sjrn_t = issued.elapsed();
 
-                        rmt.borrow_mut()
-                            .entry(variant)
-                            .or_insert_with(|| {
-                                Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
-                            })
-                            .saturating_record(
-                                remote_t.as_secs() * 1_000
-                                    + remote_t.subsec_nanos() as u64 / 1_000_000,
-                            );
-                        sjrn.borrow_mut()
-                            .entry(variant)
-                            .or_insert_with(|| {
-                                Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
-                            })
-                            .saturating_record(
-                                sjrn_t.as_secs() * 1_000 + sjrn_t.subsec_nanos() as u64 / 1_000_000,
-                            );
-                    }
+                            rmt.borrow_mut()
+                                .entry(variant)
+                                .or_insert_with(|| {
+                                    Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
+                                })
+                                .saturating_record(
+                                    remote_t.as_secs() * 1_000
+                                        + remote_t.subsec_nanos() as u64 / 1_000_000,
+                                );
+                            sjrn.borrow_mut()
+                                .entry(variant)
+                                .or_insert_with(|| {
+                                    Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
+                                })
+                                .saturating_record(
+                                    sjrn_t.as_secs() * 1_000
+                                        + sjrn_t.subsec_nanos() as u64 / 1_000_000,
+                                );
+                        }
 
-                    Ok(())
-                }));
+                        Ok(())
+                    }),
+                );
             }
         }
 

@@ -32,6 +32,7 @@ extern crate tokio_core;
 extern crate zipf;
 
 mod client;
+pub use client::{CommentId, StoryId, UserId};
 pub use client::{LobstersClient, LobstersRequest, Vote};
 
 mod execution;
@@ -50,7 +51,7 @@ pub const BASE_OPS_PER_MIN: usize = 46;
 
 #[derive(Debug, Clone)]
 enum WorkerCommand {
-    Request(time::Instant, LobstersRequest),
+    Request(time::Instant, Option<UserId>, LobstersRequest),
     Start(Arc<Barrier>),
     Wait(Arc<Barrier>),
 }

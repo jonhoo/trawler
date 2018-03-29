@@ -63,13 +63,9 @@ where
     let nstories = sampler.nstories();
 
     // then, log in all the users
-    pool = core.run(
-        pool.send_all(futures::stream::iter_ok(
-            (0..sampler.nusers())
-                .map(LobstersRequest::Login)
-                .map(|l| WorkerCommand::Request(now, l)),
-        )),
-    ).unwrap()
+    pool = core.run(pool.send_all(futures::stream::iter_ok(
+        (0..sampler.nusers()).map(|i| WorkerCommand::Request(now, Some(i), LobstersRequest::Login)),
+    ))).unwrap()
         .0;
 
     if prime {
@@ -91,15 +87,14 @@ where
         pool = core.run(
             pool.send_all(futures::stream::iter_ok(
                 (0..nstories)
-                    .map(|id| {
-                        // NOTE: we're assuming that users who vote much also submit many stories
-                        LobstersRequest::Submit {
-                            id: id_to_slug(id),
-                            user: sampler.user(&mut rng),
-                            title: format!("Base article {}", id),
-                        }
+                    .map(|id| LobstersRequest::Submit {
+                        id: id_to_slug(id),
+                        title: format!("Base article {}", id),
                     })
-                    .map(|req| WorkerCommand::Request(now, req))
+                    .map(|req| {
+                        // NOTE: we're assuming that users who vote much also submit many stories
+                        WorkerCommand::Request(now, Some(sampler.user(&mut rng)), req)
+                    })
                     .chain((0..nthreads).map(|_| WorkerCommand::Wait(barrier.clone()))),
             )),
         ).unwrap()
@@ -130,15 +125,15 @@ where
                             None
                         };
 
-                        // NOTE: we're assuming that users who vote much also submit many stories
-                        LobstersRequest::Comment {
+                        let req = LobstersRequest::Comment {
                             id: id_to_slug(id),
                             story: id_to_slug(story),
-                            user: sampler.user(&mut rng),
                             parent: parent.map(id_to_slug),
-                        }
+                        };
+
+                        // NOTE: we're assuming that users who vote much also submit many stories
+                        WorkerCommand::Request(now, Some(sampler.user(&mut rng)), req)
                     })
-                    .map(|req| WorkerCommand::Request(now, req))
                     .chain((0..nthreads).map(|_| WorkerCommand::Wait(barrier.clone()))),
             )),
         ).unwrap()

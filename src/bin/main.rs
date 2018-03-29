@@ -111,14 +111,13 @@ impl trawler::LobstersClient for WebClient {
 
     fn handle(
         this: Rc<Self>,
+        uid: Option<trawler::UserId>,
         req: trawler::LobstersRequest,
     ) -> Box<futures::Future<Item = time::Duration, Error = ()>> {
-        let mut uid = None;
         let sent = time::Instant::now();
         let mut expected = hyper::StatusCode::Ok;
         let mut req = match req {
             LobstersRequest::Frontpage => {
-                // XXX: do we want to pick randomly between logged in users when making requests?
                 let url = hyper::Uri::from_str(this.prefix.as_ref()).unwrap();
                 hyper::Request::new(hyper::Method::Get, url)
             }
@@ -141,14 +140,14 @@ impl trawler::LobstersClient for WebClient {
                 ).unwrap();
                 hyper::Request::new(hyper::Method::Get, url)
             }
-            LobstersRequest::Login(uid) => {
+            LobstersRequest::Login => {
                 return Box::new(
-                    WebClient::get_cookie_for(this.clone(), uid)
+                    WebClient::get_cookie_for(this.clone(), uid.unwrap())
                         .map(move |_| sent.elapsed())
                         .map_err(|_| ()),
                 );
             }
-            LobstersRequest::Logout(..) => {
+            LobstersRequest::Logout => {
                 /*
                 let url =
                     hyper::Uri::from_str(this.prefix.join("logout").unwrap().as_ref()).unwrap();
@@ -167,7 +166,7 @@ impl trawler::LobstersClient for WebClient {
                 ).unwrap();
                 hyper::Request::new(hyper::Method::Get, url)
             }
-            LobstersRequest::StoryVote(user, story, v) => {
+            LobstersRequest::StoryVote(story, v) => {
                 let url = hyper::Uri::from_str(
                     this.prefix
                         .join(&format!(
@@ -181,10 +180,9 @@ impl trawler::LobstersClient for WebClient {
                         .unwrap()
                         .as_ref(),
                 ).unwrap();
-                uid = Some(user);
                 hyper::Request::new(hyper::Method::Post, url)
             }
-            LobstersRequest::CommentVote(user, comment, v) => {
+            LobstersRequest::CommentVote(comment, v) => {
                 let url = hyper::Uri::from_str(
                     this.prefix
                         .join(&format!(
@@ -198,11 +196,9 @@ impl trawler::LobstersClient for WebClient {
                         .unwrap()
                         .as_ref(),
                 ).unwrap();
-                uid = Some(user);
                 hyper::Request::new(hyper::Method::Post, url)
             }
-            LobstersRequest::Submit { id, user, title } => {
-                uid = Some(user);
+            LobstersRequest::Submit { id, title } => {
                 expected = hyper::StatusCode::Found;
 
                 let url =
@@ -220,14 +216,7 @@ impl trawler::LobstersClient for WebClient {
                     .set(hyper::header::ContentType::form_url_encoded());
                 req
             }
-            LobstersRequest::Comment {
-                id,
-                user,
-                story,
-                parent,
-            } => {
-                uid = Some(user);
-
+            LobstersRequest::Comment { id, story, parent } => {
                 let url =
                     hyper::Uri::from_str(this.prefix.join("comments").unwrap().as_ref()).unwrap();
                 let mut req = hyper::Request::new(hyper::Method::Post, url);

@@ -20,10 +20,13 @@ pub trait LobstersClient {
     /// Spawn a new client for an issuer running the given tokio reactor.
     fn spawn(&mut Self::Factory, &tokio_core::reactor::Handle) -> Self;
 
-    /// Handle the given lobste.rs request, returning a future that resolves when the request has
-    /// been satisfied.
-    fn handle(Rc<Self>, LobstersRequest)
-        -> Box<futures::Future<Item = time::Duration, Error = ()>>;
+    /// Handle the given lobste.rs request, made on behalf of the given user,
+    /// returning a future that resolves when the request has been satisfied.
+    fn handle(
+        Rc<Self>,
+        Option<UserId>,
+        LobstersRequest,
+    ) -> Box<futures::Future<Item = time::Duration, Error = ()>>;
 }
 
 /// A unique lobste.rs six-character story id.
@@ -58,6 +61,9 @@ pub enum Vote {
 /// Note that one request may end up issuing multiple backend queries. To see which queries are
 /// executed by the real lobste.rs, see the [lobste.rs source
 /// code](https://github.com/lobsters/lobsters).
+///
+/// Any request type that mentions an "acting" user is guaranteed to have the `user` argument to
+/// `handle` be `Some`.
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum LobstersRequest {
     /// Render [the frontpage](https://lobste.rs/).
@@ -77,48 +83,43 @@ pub enum LobstersRequest {
     /// Render a [particular story](https://lobste.rs/s/cqnzl5/).
     Story(StoryId),
 
-    /// Log in the given user.
+    /// Log in the acting user.
     ///
-    /// Note that a user need not be logged in by a `LobstersRequest` in order for a user-action
-    /// (like `LobstersRequest::Submit`) to be issued for that user. The id here should be
-    /// considered *both* a username *and* an id. The user with the username derived from this id
-    /// should have the given id.
-    Login(UserId),
+    /// Note that a user need not be logged in by a `LobstersRequest::Login` in order for a
+    /// user-action (like `LobstersRequest::Submit`) to be issued for that user. The id here should
+    /// be considered *both* a username *and* an id. The user with the username derived from this
+    /// id should have the given id.
+    Login,
 
-    /// Log out the given user.
-    ///
-    /// Note that a user need not be logged in by a `LobstersRequest` in order for a user-action
-    /// (like `LobstersRequest::Submit`) to be issued for that user.
-    Logout(UserId),
+    /// Log out the acting user.
+    Logout,
 
-    /// Have the given user issue an up or down vote for the given story.
+    /// Have the acting user issue an up or down vote for the given story.
     ///
     /// Note that the load generator does not guarantee that a given user will only issue a single
     /// vote for a given story, nor that they will issue an equivalent number of upvotes and
     /// downvotes for a given story.
-    StoryVote(UserId, StoryId, Vote),
+    StoryVote(StoryId, Vote),
 
-    /// Have the given user issue an up or down vote for the given comment.
+    /// Have the acting user issue an up or down vote for the given comment.
     ///
     /// Note that the load generator does not guarantee that a given user will only issue a single
     /// vote for a given comment, nor that they will issue an equivalent number of upvotes and
     /// downvotes for a given comment.
-    CommentVote(UserId, CommentId, Vote),
+    CommentVote(CommentId, Vote),
 
-    /// Have the given user submit a new story to the site.
+    /// Have the acting user submit a new story to the site.
     ///
     /// Note that the *generator* dictates the ids of new stories so that it can more easily keep
     /// track of which stories exist, and thus which stories can be voted for or commented on.
     Submit {
         /// The new story's id.
         id: StoryId,
-        /// The story's submitter.
-        user: UserId,
         /// The story's title.
         title: String,
     },
 
-    /// Have the given user submit a new comment to the given story.
+    /// Have the acting user submit a new comment to the given story.
     ///
     /// Note that the *generator* dictates the ids of new comments so that it can more easily keep
     /// track of which comments exist for the purposes of generating comment votes and deeper
@@ -126,8 +127,6 @@ pub enum LobstersRequest {
     Comment {
         /// The new comment's id.
         id: CommentId,
-        /// The comment's author.
-        user: UserId,
         /// The story the comment is for.
         story: StoryId,
         /// The id of the comment's parent comment, if any.
@@ -146,21 +145,19 @@ impl LobstersRequest {
             mem::discriminant(&LobstersRequest::User(0)),
             mem::discriminant(&LobstersRequest::Comments),
             mem::discriminant(&LobstersRequest::Recent),
-            mem::discriminant(&LobstersRequest::CommentVote(0, [0; 6], Vote::Up)),
-            mem::discriminant(&LobstersRequest::StoryVote(0, [0; 6], Vote::Up)),
+            mem::discriminant(&LobstersRequest::CommentVote([0; 6], Vote::Up)),
+            mem::discriminant(&LobstersRequest::StoryVote([0; 6], Vote::Up)),
             mem::discriminant(&LobstersRequest::Comment {
                 id: [0; 6],
-                user: 0,
                 story: [0; 6],
                 parent: None,
             }),
-            mem::discriminant(&LobstersRequest::Login(0)),
+            mem::discriminant(&LobstersRequest::Login),
             mem::discriminant(&LobstersRequest::Submit {
                 id: [0; 6],
-                user: 0,
                 title: String::new(),
             }),
-            mem::discriminant(&LobstersRequest::Logout(0)),
+            mem::discriminant(&LobstersRequest::Logout),
         ].into_iter()
     }
 
@@ -174,17 +171,16 @@ impl LobstersRequest {
             d if d == mem::discriminant(&LobstersRequest::Comments) => "Comments",
             d if d == mem::discriminant(&LobstersRequest::User(0)) => "User",
             d if d == mem::discriminant(&LobstersRequest::Story([0; 6])) => "Story",
-            d if d == mem::discriminant(&LobstersRequest::Login(0)) => "Login",
-            d if d == mem::discriminant(&LobstersRequest::Logout(0)) => "Logout",
-            d if d == mem::discriminant(&LobstersRequest::StoryVote(0, [0; 6], Vote::Up)) => {
+            d if d == mem::discriminant(&LobstersRequest::Login) => "Login",
+            d if d == mem::discriminant(&LobstersRequest::Logout) => "Logout",
+            d if d == mem::discriminant(&LobstersRequest::StoryVote([0; 6], Vote::Up)) => {
                 "StoryVote"
             }
-            d if d == mem::discriminant(&LobstersRequest::CommentVote(0, [0; 6], Vote::Up)) => {
+            d if d == mem::discriminant(&LobstersRequest::CommentVote([0; 6], Vote::Up)) => {
                 "CommentVote"
             }
             d if d == mem::discriminant(&LobstersRequest::Submit {
                 id: [0; 6],
-                user: 0,
                 title: String::new(),
             }) =>
             {
@@ -192,7 +188,6 @@ impl LobstersRequest {
             }
             d if d == mem::discriminant(&LobstersRequest::Comment {
                 id: [0; 6],
-                user: 0,
                 story: [0; 6],
                 parent: None,
             }) =>
@@ -217,7 +212,6 @@ impl LobstersRequest {
     ///  - `/path` is the approximate lobste.rs URL endpoint for the request.
     ///  - `[params]` are any additional params to the request such as id to assign or associate a
     ///    new resource with with.
-    ///  - `<user>` is the user performing the action, if any.
     pub fn describe(&self) -> String {
         match *self {
             LobstersRequest::Frontpage => String::from("GET /"),
@@ -227,49 +221,43 @@ impl LobstersRequest {
             LobstersRequest::Story(ref slug) => {
                 format!("GET /s/{}", ::std::str::from_utf8(&slug[..]).unwrap())
             }
-            LobstersRequest::Login(uid) => format!("POST /login <{}>", uid),
-            LobstersRequest::Logout(uid) => format!("POST /logout <{}>", uid),
-            LobstersRequest::StoryVote(uid, ref story, v) => format!(
-                "POST /stories/{}/{} <{}>",
+            LobstersRequest::Login => String::from("POST /login"),
+            LobstersRequest::Logout => String::from("POST /logout"),
+            LobstersRequest::StoryVote(ref story, v) => format!(
+                "POST /stories/{}/{}",
                 ::std::str::from_utf8(&story[..]).unwrap(),
                 match v {
                     Vote::Up => "upvote",
                     Vote::Down => "downvote",
                 },
-                uid
             ),
-            LobstersRequest::CommentVote(uid, ref comment, v) => format!(
-                "POST /comments/{}/{} <{}>",
+            LobstersRequest::CommentVote(ref comment, v) => format!(
+                "POST /comments/{}/{}",
                 ::std::str::from_utf8(&comment[..]).unwrap(),
                 match v {
                     Vote::Up => "upvote",
                     Vote::Down => "downvote",
                 },
-                uid
             ),
-            LobstersRequest::Submit { ref id, user, .. } => format!(
-                "POST /stories [{}] <{}>",
+            LobstersRequest::Submit { ref id, .. } => format!(
+                "POST /stories [{}]",
                 ::std::str::from_utf8(&id[..]).unwrap(),
-                user
             ),
             LobstersRequest::Comment {
                 ref id,
-                user,
                 ref story,
                 ref parent,
             } => match *parent {
                 Some(ref parent) => format!(
-                    "POST /comments/{} [{}; {}] <{}>",
+                    "POST /comments/{} [{}; {}]",
                     ::std::str::from_utf8(&parent[..]).unwrap(),
                     ::std::str::from_utf8(&id[..]).unwrap(),
                     ::std::str::from_utf8(&story[..]).unwrap(),
-                    user
                 ),
                 None => format!(
-                    "POST /comments [{}; {}] <{}>",
+                    "POST /comments [{}; {}]",
                     ::std::str::from_utf8(&id[..]).unwrap(),
                     ::std::str::from_utf8(&story[..]).unwrap(),
-                    user
                 ),
             },
         }
@@ -290,49 +278,46 @@ mod tests {
             LobstersRequest::Story([48, 48, 48, 48, 57, 97]).describe(),
             "GET /s/00009a"
         );
-        assert_eq!(LobstersRequest::Login(3).describe(), "POST /login <3>");
-        assert_eq!(LobstersRequest::Logout(3).describe(), "POST /logout <3>");
+        assert_eq!(LobstersRequest::Login.describe(), "POST /login");
+        assert_eq!(LobstersRequest::Logout.describe(), "POST /logout");
         assert_eq!(
-            LobstersRequest::StoryVote(3, [48, 48, 48, 98, 57, 97], Vote::Up).describe(),
-            "POST /stories/000b9a/upvote <3>"
+            LobstersRequest::StoryVote([48, 48, 48, 98, 57, 97], Vote::Up).describe(),
+            "POST /stories/000b9a/upvote"
         );
         assert_eq!(
-            LobstersRequest::StoryVote(3, [48, 48, 48, 98, 57, 97], Vote::Down).describe(),
-            "POST /stories/000b9a/downvote <3>"
+            LobstersRequest::StoryVote([48, 48, 48, 98, 57, 97], Vote::Down).describe(),
+            "POST /stories/000b9a/downvote"
         );
         assert_eq!(
-            LobstersRequest::CommentVote(3, [48, 48, 48, 98, 57, 97], Vote::Up).describe(),
-            "POST /comments/000b9a/upvote <3>"
+            LobstersRequest::CommentVote([48, 48, 48, 98, 57, 97], Vote::Up).describe(),
+            "POST /comments/000b9a/upvote"
         );
         assert_eq!(
-            LobstersRequest::CommentVote(3, [48, 48, 48, 98, 57, 97], Vote::Down).describe(),
-            "POST /comments/000b9a/downvote <3>"
+            LobstersRequest::CommentVote([48, 48, 48, 98, 57, 97], Vote::Down).describe(),
+            "POST /comments/000b9a/downvote"
         );
         assert_eq!(
             LobstersRequest::Submit {
                 id: [48, 48, 48, 48, 57, 97],
-                user: 3,
                 title: String::from("foo"),
             }.describe(),
-            "POST /stories [00009a] <3>"
+            "POST /stories [00009a]"
         );
         assert_eq!(
             LobstersRequest::Comment {
                 id: [48, 48, 48, 48, 57, 97],
-                user: 3,
                 story: [48, 48, 48, 48, 57, 98],
                 parent: Some([48, 48, 48, 48, 57, 99]),
             }.describe(),
-            "POST /comments/00009c [00009a; 00009b] <3>"
+            "POST /comments/00009c [00009a; 00009b]"
         );
         assert_eq!(
             LobstersRequest::Comment {
                 id: [48, 48, 48, 48, 57, 97],
-                user: 3,
                 story: [48, 48, 48, 48, 57, 98],
                 parent: None,
             }.describe(),
-            "POST /comments [00009a; 00009b] <3>"
+            "POST /comments [00009a; 00009b]"
         );
     }
 }

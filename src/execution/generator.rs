@@ -25,7 +25,6 @@ where
 
     let nstories = sampler.nstories();
     let ncomments = sampler.ncomments();
-    let nusers = sampler.nusers();
 
     let mut ops = 0;
     let mut rng = rand::thread_rng();
@@ -51,6 +50,11 @@ where
             applies
         };
 
+        // XXX: we're assuming that basically all page views happen as a user, and that the users
+        // who are most active voters are also the ones that interact most with the site.
+        // XXX: we're assuming that users who vote a lot also comment a lot
+        // XXX: we're assuming that users who vote a lot also submit many stories
+        let user = Some(sampler.user(&mut rng));
         let req = if pick(55842) {
             // XXX: we're assuming here that stories with more votes are viewed more
             LobstersRequest::Story(id_to_slug(sampler.story_for_vote(&mut rng)))
@@ -64,29 +68,18 @@ where
         } else if pick(967) {
             LobstersRequest::Recent
         } else if pick(630) {
-            LobstersRequest::CommentVote(
-                sampler.user(&mut rng),
-                id_to_slug(sampler.comment_for_vote(&mut rng)),
-                Vote::Up,
-            )
+            LobstersRequest::CommentVote(id_to_slug(sampler.comment_for_vote(&mut rng)), Vote::Up)
         } else if pick(475) {
-            LobstersRequest::StoryVote(
-                sampler.user(&mut rng),
-                id_to_slug(sampler.story_for_vote(&mut rng)),
-                Vote::Up,
-            )
+            LobstersRequest::StoryVote(id_to_slug(sampler.story_for_vote(&mut rng)), Vote::Up)
         } else if pick(316) {
             // comments without a parent
-            let id = rng.gen_range(ncomments, MAX_SLUGGABLE_ID);
-            // XXX: we're assuming that users who vote a lot also comment a lot
             LobstersRequest::Comment {
-                id: id_to_slug(id),
-                user: sampler.user(&mut rng),
+                id: id_to_slug(rng.gen_range(ncomments, MAX_SLUGGABLE_ID)),
                 story: id_to_slug(sampler.story_for_comment(&mut rng)),
                 parent: None,
             }
         } else if pick(87) {
-            LobstersRequest::Login(rng.gen_range(0, nusers))
+            LobstersRequest::Login
         } else if pick(71) {
             // comments with a parent
             let id = rng.gen_range(ncomments, MAX_SLUGGABLE_ID);
@@ -95,40 +88,28 @@ where
             // we know that every nth comment from prepopulation is to the same story
             let comments_per_story = ncomments / nstories;
             let parent = story + nstories * rng.gen_range(0, comments_per_story);
-            // XXX: we're assuming that users who vote a lot also comment a lot
             LobstersRequest::Comment {
                 id: id_to_slug(id),
-                user: sampler.user(&mut rng),
                 story: id_to_slug(story),
                 parent: Some(id_to_slug(parent)),
             }
         } else if pick(54) {
-            LobstersRequest::CommentVote(
-                sampler.user(&mut rng),
-                id_to_slug(sampler.comment_for_vote(&mut rng)),
-                Vote::Down,
-            )
+            LobstersRequest::CommentVote(id_to_slug(sampler.comment_for_vote(&mut rng)), Vote::Down)
         } else if pick(53) {
             let id = rng.gen_range(nstories, MAX_SLUGGABLE_ID);
-            // XXX: we're assuming that users who vote a lot also submit many stories
             LobstersRequest::Submit {
                 id: id_to_slug(id),
-                user: sampler.user(&mut rng),
                 title: format!("benchmark {}", id),
             }
         } else if pick(21) {
-            LobstersRequest::StoryVote(
-                sampler.user(&mut rng),
-                id_to_slug(sampler.story_for_vote(&mut rng)),
-                Vote::Down,
-            )
+            LobstersRequest::StoryVote(id_to_slug(sampler.story_for_vote(&mut rng)), Vote::Down)
         } else {
             // ~.003%
-            LobstersRequest::Logout(rng.gen_range(0, nusers))
+            LobstersRequest::Logout
         };
 
         let issued = next;
-        pool = core.run(pool.send(WorkerCommand::Request(issued, req)))
+        pool = core.run(pool.send(WorkerCommand::Request(issued, user, req)))
             .unwrap();
         ops += 1;
 
