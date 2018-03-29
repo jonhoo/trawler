@@ -1,7 +1,7 @@
 use BASE_OPS_PER_MIN;
 use WorkerCommand;
-use chan;
 use client::{LobstersClient, LobstersRequest};
+use crossbeam_channel;
 use execution::{self, id_to_slug, Sampler};
 use rand::{self, Rng};
 use std::sync::{Arc, Barrier, Mutex};
@@ -34,7 +34,7 @@ where
     let runtime = load.runtime;
 
     let factory = Arc::new(Mutex::new(factory));
-    let (pool, jobs) = chan::async();
+    let (pool, jobs) = crossbeam_channel::unbounded();
     let workers: Vec<_> = (0..nthreads)
         .map(|i| {
             let jobs = jobs.clone();
@@ -62,7 +62,8 @@ where
 
     // then, log in all the users
     for u in 0..sampler.nusers() {
-        pool.send(WorkerCommand::Request(now, Some(u), LobstersRequest::Login));
+        pool.send(WorkerCommand::Request(now, Some(u), LobstersRequest::Login))
+            .unwrap();
     }
 
     if prime {
@@ -75,7 +76,7 @@ where
         // it receives one, it can't receive another until the barrier has been passed! Therefore,
         // sending `nthreads` barriers should ensure that every thread gets one
         for _ in 0..nthreads {
-            pool.send(WorkerCommand::Wait(barrier.clone()));
+            pool.send(WorkerCommand::Wait(barrier.clone())).unwrap();
         }
         barrier.wait();
 
@@ -90,12 +91,12 @@ where
                 now,
                 Some(sampler.user(&mut rng)),
                 req,
-            ));
+            )).unwrap();
         }
 
         // wait for all threads to finish priming stories
         for _ in 0..nthreads {
-            pool.send(WorkerCommand::Wait(barrier.clone()));
+            pool.send(WorkerCommand::Wait(barrier.clone())).unwrap();
         }
         barrier.wait();
 
@@ -129,13 +130,13 @@ where
                 now,
                 Some(sampler.user(&mut rng)),
                 req,
-            ));
+            )).unwrap();
         }
 
         // wait for all threads to finish priming comments
         // the addition of the ::Wait barrier will also ensure that start is (re)set
         for _ in 0..nthreads {
-            pool.send(WorkerCommand::Wait(barrier.clone()));
+            pool.send(WorkerCommand::Wait(barrier.clone())).unwrap();
         }
         barrier.wait();
         println!("--> finished priming database");
@@ -143,7 +144,7 @@ where
 
     // wait for all threads to be ready (and set their start time correctly)
     for _ in 0..nthreads {
-        pool.send(WorkerCommand::Start(barrier.clone()));
+        pool.send(WorkerCommand::Start(barrier.clone())).unwrap();
     }
     barrier.wait();
 

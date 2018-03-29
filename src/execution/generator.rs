@@ -1,6 +1,6 @@
 use WorkerCommand;
-use chan;
 use client::{LobstersClient, LobstersRequest, Vote};
+use crossbeam_channel;
 use execution::{self, id_to_slug, Sampler, MAX_SLUGGABLE_ID};
 use rand::{self, Rng};
 use std::sync::atomic;
@@ -9,7 +9,7 @@ use std::time;
 pub(super) fn run<C>(
     load: execution::Workload,
     sampler: Sampler,
-    pool: chan::Sender<WorkerCommand>,
+    pool: crossbeam_channel::Sender<WorkerCommand>,
     target: f64,
 ) -> usize
 where
@@ -106,7 +106,8 @@ where
         };
 
         let issued = next;
-        pool.send(WorkerCommand::Request(issued, user, req));
+        pool.send(WorkerCommand::Request(issued, user, req))
+            .unwrap();
         ops += 1;
 
         // schedule next delivery

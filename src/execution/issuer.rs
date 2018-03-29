@@ -1,6 +1,6 @@
 use WorkerCommand;
-use chan;
 use client::LobstersClient;
+use crossbeam_channel;
 use execution::Stats;
 use futures::Future;
 use hdrhistogram::Histogram;
@@ -16,7 +16,7 @@ pub(super) fn run<C>(
     max_in_flight: usize,
     mut core: tokio_core::reactor::Core,
     client: C,
-    jobs: chan::Receiver<WorkerCommand>,
+    jobs: crossbeam_channel::Receiver<WorkerCommand>,
 ) -> (Stats, Stats)
 where
     C: LobstersClient,
@@ -30,9 +30,15 @@ where
     let sjrn = Rc::new(RefCell::new(HashMap::default()));
     let rmt = Rc::new(RefCell::new(HashMap::default()));
 
-    while let Some(cmd) = jobs.recv() {
-        match cmd {
-            WorkerCommand::Wait(barrier) => {
+    loop {
+        match jobs.try_recv() {
+            Err(crossbeam_channel::TryRecvError::Disconnected) => break,
+            Err(crossbeam_channel::TryRecvError::Empty) => {
+                // TODO: once we have a futures-aware mpmc channel, we won't have to hack like this
+                // track https://github.com/crossbeam-rs/crossbeam-channel/issues/22
+                core.turn(Some(time::Duration::new(0, 0)))
+            }
+            Ok(WorkerCommand::Wait(barrier)) => {
                 // when we get a barrier, wait for all pending requests to complete
                 {
                     while *in_flight.borrow_mut() > 0 {
@@ -42,7 +48,7 @@ where
 
                 barrier.wait();
             }
-            WorkerCommand::Start(barrier) => {
+            Ok(WorkerCommand::Start(barrier)) => {
                 {
                     while *in_flight.borrow_mut() > 0 {
                         core.turn(None);
@@ -53,7 +59,7 @@ where
                 // start should be set to the first time after priming has finished
                 start = Some(time::Instant::now());
             }
-            WorkerCommand::Request(issued, user, request) => {
+            Ok(WorkerCommand::Request(issued, user, request)) => {
                 // ensure we don't have too many requests in flight at the same time
                 {
                     while *in_flight.borrow_mut() >= max_in_flight {

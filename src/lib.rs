@@ -22,7 +22,7 @@
 //! Rails application, you must apply the patches in `lobsters.diff` first.
 #![deny(missing_docs)]
 
-extern crate chan;
+extern crate crossbeam_channel;
 extern crate futures;
 extern crate hdrhistogram;
 extern crate histogram_sampler;
