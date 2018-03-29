@@ -11,7 +11,7 @@ use tokio_core;
 pub(crate) fn run<C, I>(
     load: execution::Workload,
     in_flight: usize,
-    factory: I,
+    mut factory: I,
     prime: bool,
 ) -> (
     Vec<thread::JoinHandle<(execution::Stats, execution::Stats)>>,
@@ -32,6 +32,10 @@ where
     let nthreads = load.threads;
     let warmup = load.warmup;
     let runtime = load.runtime;
+
+    if prime {
+        C::setup(&mut factory);
+    }
 
     let factory = Arc::new(Mutex::new(factory));
     let (pool, jobs) = crossbeam_channel::unbounded();

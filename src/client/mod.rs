@@ -17,6 +17,25 @@ pub trait LobstersClient {
     /// The type used to spawn more clients of this type.
     type Factory;
 
+    /// Set up a fresh instance of the backend before priming.
+    ///
+    /// Implementing this allows benchmarking a backend without ever running the lobste.rs
+    /// application. Normally, a backend would need to run the lobsters setup routine:
+    ///
+    /// ```console
+    /// $ rails db:drop
+    /// $ rails db:create
+    /// $ rails db:schema:load
+    /// $ rails db:seed
+    /// ```
+    ///
+    /// The default implementation of this method just prints an informational message saying that
+    /// the backend was not re-created.
+    fn setup(&mut Self::Factory) {
+        eprintln!("note: did not re-create backend as lobsters client did not implement setup()");
+        eprintln!("note: if priming fails, make sure you have run the lobsters setup scripts");
+    }
+
     /// Spawn a new client for an issuer running the given tokio reactor.
     fn spawn(&mut Self::Factory, &tokio_core::reactor::Handle) -> Self;
 
