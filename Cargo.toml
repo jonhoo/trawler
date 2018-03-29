@@ -1,6 +1,6 @@
 [package]
 name = "trawler"
-version = "0.5.0"
+version = "0.5.1"
 
 description = "A workload generator that emulates the traffic to lobste.rs"
 readme = "README.md"
@@ -35,7 +35,7 @@ zipf = "1.0.0"
 hdrhistogram = "6.0.0"
 histogram-sampler = "0.1.3"
 
-multiqueue = "0.3.2"
+chan = "0.1.21"
 tokio-core = "0.1"
 futures = "0.1"
 

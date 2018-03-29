@@ -1,9 +1,9 @@
 use WorkerCommand;
+use chan;
 use client::LobstersClient;
 use execution::Stats;
-use futures::{Future, Stream};
+use futures::Future;
 use hdrhistogram::Histogram;
-use multiqueue;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -16,7 +16,7 @@ pub(super) fn run<C>(
     max_in_flight: usize,
     mut core: tokio_core::reactor::Core,
     client: C,
-    mut jobs: multiqueue::MPMCFutReceiver<WorkerCommand>,
+    jobs: chan::Receiver<WorkerCommand>,
 ) -> (Stats, Stats)
 where
     C: LobstersClient,
@@ -30,9 +30,7 @@ where
     let sjrn = Rc::new(RefCell::new(HashMap::default()));
     let rmt = Rc::new(RefCell::new(HashMap::default()));
 
-    while let Ok((Some(cmd), stream)) = core.run(jobs.into_future()) {
-        jobs = stream;
-
+    while let Some(cmd) = jobs.recv() {
         match cmd {
             WorkerCommand::Wait(barrier) => {
                 // when we get a barrier, wait for all pending requests to complete
@@ -113,8 +111,6 @@ where
                 while *in_flight.borrow_mut() > 0 {
                     core.turn(None);
                 }
-                // drain the channel so we don't block the load generators
-                core.run(jobs.filter(|_| false).collect()).unwrap();
                 break;
             }
         }

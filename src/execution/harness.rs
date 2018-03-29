@@ -1,9 +1,8 @@
 use BASE_OPS_PER_MIN;
 use WorkerCommand;
+use chan;
 use client::{LobstersClient, LobstersRequest};
 use execution::{self, id_to_slug, Sampler};
-use futures::{self, Sink};
-use multiqueue;
 use rand::{self, Rng};
 use std::sync::{Arc, Barrier, Mutex};
 use std::{thread, time};
@@ -35,7 +34,7 @@ where
     let runtime = load.runtime;
 
     let factory = Arc::new(Mutex::new(factory));
-    let (mut pool, jobs) = multiqueue::mpmc_fut_queue(0);
+    let (pool, jobs) = chan::async();
     let workers: Vec<_> = (0..nthreads)
         .map(|i| {
             let jobs = jobs.clone();
@@ -54,7 +53,6 @@ where
         })
         .collect();
 
-    let mut core = tokio_core::reactor::Core::new().unwrap();
     let barrier = Arc::new(Barrier::new(nthreads + 1));
     let now = time::Instant::now();
 
@@ -63,10 +61,9 @@ where
     let nstories = sampler.nstories();
 
     // then, log in all the users
-    pool = core.run(pool.send_all(futures::stream::iter_ok(
-        (0..sampler.nusers()).map(|i| WorkerCommand::Request(now, Some(i), LobstersRequest::Login)),
-    ))).unwrap()
-        .0;
+    for u in 0..sampler.nusers() {
+        pool.send(WorkerCommand::Request(now, Some(u), LobstersRequest::Login));
+    }
 
     if prime {
         println!("--> priming database");
@@ -77,79 +74,77 @@ where
         // after all), but since a ::Wait causes the receiving thread to *block*, we know that once
         // it receives one, it can't receive another until the barrier has been passed! Therefore,
         // sending `nthreads` barriers should ensure that every thread gets one
-        pool = core.run(pool.send_all(futures::stream::iter_ok(
-            (0..nthreads).map(|_| WorkerCommand::Wait(barrier.clone())),
-        ))).unwrap()
-            .0;
+        for _ in 0..nthreads {
+            pool.send(WorkerCommand::Wait(barrier.clone()));
+        }
         barrier.wait();
 
         // first, we need to prime the database stories!
-        pool = core.run(
-            pool.send_all(futures::stream::iter_ok(
-                (0..nstories)
-                    .map(|id| LobstersRequest::Submit {
-                        id: id_to_slug(id),
-                        title: format!("Base article {}", id),
-                    })
-                    .map(|req| {
-                        // NOTE: we're assuming that users who vote much also submit many stories
-                        WorkerCommand::Request(now, Some(sampler.user(&mut rng)), req)
-                    })
-                    .chain((0..nthreads).map(|_| WorkerCommand::Wait(barrier.clone()))),
-            )),
-        ).unwrap()
-            .0;
+        for id in 0..nstories {
+            // NOTE: we're assuming that users who vote much also submit many stories
+            let req = LobstersRequest::Submit {
+                id: id_to_slug(id),
+                title: format!("Base article {}", id),
+            };
+            pool.send(WorkerCommand::Request(
+                now,
+                Some(sampler.user(&mut rng)),
+                req,
+            ));
+        }
 
         // wait for all threads to finish priming stories
+        for _ in 0..nthreads {
+            pool.send(WorkerCommand::Wait(barrier.clone()));
+        }
         barrier.wait();
 
         // and as many comments
-        pool = core.run(
-            pool.send_all(futures::stream::iter_ok(
-                (0..sampler.ncomments())
-                    .map(|id| {
-                        let story = id % nstories; // TODO: distribution
-                        let parent = if rng.gen_weighted_bool(2) {
-                            // we need to pick a parent in the same story
-                            let last_safe_comment_id = id.saturating_sub(nthreads as u32) / 2;
-                            // how many stories to we know there are per story?
-                            let safe_comments_per_story = last_safe_comment_id / nstories;
-                            // pick the nth comment to chosen story
-                            if safe_comments_per_story != 0 {
-                                let story_comment = rng.gen_range(0, safe_comments_per_story);
-                                Some(story + nstories * story_comment)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        };
+        for id in 0..sampler.ncomments() {
+            let story = id % nstories; // TODO: distribution
+            let parent = if rng.gen_weighted_bool(2) {
+                // we need to pick a parent in the same story
+                let last_safe_comment_id = id.saturating_sub(nthreads as u32) / 2;
+                // how many stories to we know there are per story?
+                let safe_comments_per_story = last_safe_comment_id / nstories;
+                // pick the nth comment to chosen story
+                if safe_comments_per_story != 0 {
+                    let story_comment = rng.gen_range(0, safe_comments_per_story);
+                    Some(story + nstories * story_comment)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
-                        let req = LobstersRequest::Comment {
-                            id: id_to_slug(id),
-                            story: id_to_slug(story),
-                            parent: parent.map(id_to_slug),
-                        };
+            let req = LobstersRequest::Comment {
+                id: id_to_slug(id),
+                story: id_to_slug(story),
+                parent: parent.map(id_to_slug),
+            };
 
-                        // NOTE: we're assuming that users who vote much also submit many stories
-                        WorkerCommand::Request(now, Some(sampler.user(&mut rng)), req)
-                    })
-                    .chain((0..nthreads).map(|_| WorkerCommand::Wait(barrier.clone()))),
-            )),
-        ).unwrap()
-            .0;
+            // NOTE: we're assuming that users who vote much also submit many stories
+            pool.send(WorkerCommand::Request(
+                now,
+                Some(sampler.user(&mut rng)),
+                req,
+            ));
+        }
 
         // wait for all threads to finish priming comments
         // the addition of the ::Wait barrier will also ensure that start is (re)set
+        for _ in 0..nthreads {
+            pool.send(WorkerCommand::Wait(barrier.clone()));
+        }
         barrier.wait();
         println!("--> finished priming database");
     }
 
     // wait for all threads to be ready (and set their start time correctly)
-    pool = core.run(pool.send_all(futures::stream::iter_ok(
-        (0..nthreads).map(|_| WorkerCommand::Start(barrier.clone())),
-    ))).unwrap()
-        .0;
+    for _ in 0..nthreads {
+        pool.send(WorkerCommand::Start(barrier.clone()));
+    }
     barrier.wait();
 
     let generators: Vec<_> = (0..ngen)

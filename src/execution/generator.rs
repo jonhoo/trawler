@@ -1,17 +1,15 @@
 use WorkerCommand;
+use chan;
 use client::{LobstersClient, LobstersRequest, Vote};
 use execution::{self, id_to_slug, Sampler, MAX_SLUGGABLE_ID};
-use futures::Sink;
-use multiqueue;
 use rand::{self, Rng};
 use std::sync::atomic;
 use std::time;
-use tokio_core;
 
 pub(super) fn run<C>(
     load: execution::Workload,
     sampler: Sampler,
-    mut pool: multiqueue::MPMCFutSender<WorkerCommand>,
+    pool: chan::Sender<WorkerCommand>,
     target: f64,
 ) -> usize
 where
@@ -30,7 +28,6 @@ where
     let mut rng = rand::thread_rng();
     let interarrival_ns = rand::distributions::exponential::Exp::new(target * 1e-9);
 
-    let mut core = tokio_core::reactor::Core::new().unwrap();
     let mut next = time::Instant::now();
     while next < end {
         use rand::distributions::IndependentSample;
@@ -109,8 +106,7 @@ where
         };
 
         let issued = next;
-        pool = core.run(pool.send(WorkerCommand::Request(issued, user, req)))
-            .unwrap();
+        pool.send(WorkerCommand::Request(issued, user, req));
         ops += 1;
 
         // schedule next delivery

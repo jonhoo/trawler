@@ -22,11 +22,11 @@
 //! Rails application, you must apply the patches in `lobsters.diff` first.
 #![deny(missing_docs)]
 
+extern crate chan;
 extern crate futures;
 extern crate hdrhistogram;
 extern crate histogram_sampler;
 extern crate libc;
-extern crate multiqueue;
 extern crate rand;
 extern crate tokio_core;
 extern crate zipf;
