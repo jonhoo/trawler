@@ -7,6 +7,7 @@ use hdrhistogram::Histogram;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::atomic;
 use std::{mem, time};
 use tokio_core;
 
@@ -36,7 +37,8 @@ where
             Err(crossbeam_channel::TryRecvError::Empty) => {
                 // TODO: once we have a futures-aware mpmc channel, we won't have to hack like this
                 // track https://github.com/crossbeam-rs/crossbeam-channel/issues/22
-                core.turn(Some(time::Duration::new(0, 0)))
+                core.turn(Some(time::Duration::new(0, 0)));
+                atomic::spin_loop_hint();
             }
             Ok(WorkerCommand::Wait(barrier)) => {
                 // when we get a barrier, wait for all pending requests to complete
