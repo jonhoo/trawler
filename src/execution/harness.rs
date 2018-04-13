@@ -98,23 +98,26 @@ where
             )).unwrap();
         }
 
-        // wait for all threads to finish priming stories
-        for _ in 0..nthreads {
-            pool.send(WorkerCommand::Wait(barrier.clone())).unwrap();
-        }
-        barrier.wait();
-
         // and as many comments
         for id in 0..sampler.ncomments() {
             let story = id % nstories; // TODO: distribution
+
+            // synchronize occasionally to ensure that we can safely generate parent comments
+            if story == 0 {
+                for _ in 0..nthreads {
+                    pool.send(WorkerCommand::Wait(barrier.clone())).unwrap();
+                }
+                barrier.wait();
+            }
+
             let parent = if rng.gen_weighted_bool(2) {
                 // we need to pick a parent in the same story
-                let last_safe_comment_id = id.saturating_sub(nthreads as u32) / 2;
+                let generated_comments = id - story;
                 // how many stories to we know there are per story?
-                let safe_comments_per_story = last_safe_comment_id / nstories;
+                let generated_comments_per_story = generated_comments / nstories;
                 // pick the nth comment to chosen story
-                if safe_comments_per_story != 0 {
-                    let story_comment = rng.gen_range(0, safe_comments_per_story);
+                if generated_comments_per_story != 0 {
+                    let story_comment = rng.gen_range(0, generated_comments_per_story);
                     Some(story + nstories * story_comment)
                 } else {
                     None
