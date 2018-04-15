@@ -175,7 +175,7 @@ impl<'a> WorkloadBuilder<'a> {
 
         // actually run the workload
         let start = time::Instant::now();
-        let (workers, ops) =
+        let (workers, generated, dropped) =
             execution::harness::run::<C, _>(self.load.clone(), self.max_in_flight, factory, prime);
 
         for w in workers {
@@ -203,8 +203,14 @@ impl<'a> WorkloadBuilder<'a> {
             BASE_OPS_PER_MIN as f64 * self.load.req_scale / 60.0,
         );
         println!(
-            "# actual ops/s: {:.2}",
-            ops as f64 / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
+            "# generated ops/s: {:.2}",
+            generated as f64
+                / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
+        );
+        println!(
+            "# achieved ops/s: {:.2}",
+            (generated - dropped) as f64
+                / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
         );
 
         if let Some(h) = self.histogram_file {

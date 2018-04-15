@@ -16,6 +16,7 @@ pub(crate) fn run<C, I>(
 ) -> (
     Vec<thread::JoinHandle<(execution::Stats, execution::Stats)>>,
     usize,
+    usize,
 )
 where
     I: Send + 'static,
@@ -169,6 +170,10 @@ where
         .collect();
 
     drop(pool);
-    let ops = generators.into_iter().map(|gen| gen.join().unwrap()).sum();
-    (workers, ops)
+    let generated = generators.into_iter().map(|gen| gen.join().unwrap()).sum();
+
+    // how many operations were left in the queue at the end?
+    let dropped = jobs.iter().count();
+
+    (workers, generated, dropped)
 }
