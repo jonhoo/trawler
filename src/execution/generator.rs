@@ -11,7 +11,7 @@ pub(super) fn run<C>(
     sampler: Sampler,
     pool: crossbeam_channel::Sender<WorkerCommand>,
     target: f64,
-) -> usize
+) -> f64
 where
     C: LobstersClient + 'static,
 {
@@ -19,6 +19,7 @@ where
     let runtime = load.runtime;
 
     let start = time::Instant::now();
+    let count_from = start + warmup;
     let end = start + warmup + runtime;
 
     let nstories = sampler.nstories();
@@ -105,14 +106,24 @@ where
             LobstersRequest::Logout
         };
 
+        if now > count_from {
+            ops += 1;
+        }
+
         let issued = next;
         pool.send(WorkerCommand::Request(issued, user, req))
             .unwrap();
-        ops += 1;
 
         // schedule next delivery
         next += time::Duration::new(0, interarrival_ns.ind_sample(&mut rng) as u32);
     }
 
-    ops
+    let took = count_from.elapsed();
+    let per_second = if took == time::Duration::new(0, 0) {
+        0.0
+    } else {
+        ops as f64 / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
+    };
+
+    per_second
 }

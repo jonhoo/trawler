@@ -14,8 +14,8 @@ pub(crate) fn run<C, I>(
     mut factory: I,
     prime: bool,
 ) -> (
-    Vec<thread::JoinHandle<(execution::Stats, execution::Stats)>>,
-    usize,
+    f64,
+    Vec<thread::JoinHandle<(f64, execution::Stats, execution::Stats)>>,
     usize,
 )
 where
@@ -170,10 +170,10 @@ where
         .collect();
 
     drop(pool);
-    let generated = generators.into_iter().map(|gen| gen.join().unwrap()).sum();
+    let gps = generators.into_iter().map(|gen| gen.join().unwrap()).sum();
 
     // how many operations were left in the queue at the end?
     let dropped = jobs.iter().count();
 
-    (workers, generated, dropped)
+    (gps, workers, dropped)
 }

@@ -174,12 +174,13 @@ impl<'a> WorkloadBuilder<'a> {
         let (mut sjrn_t, mut rmt_t) = hists;
 
         // actually run the workload
-        let start = time::Instant::now();
-        let (workers, generated, dropped) =
+        let (generated_per_sec, workers, dropped) =
             execution::harness::run::<C, _>(self.load.clone(), self.max_in_flight, factory, prime);
 
+        let mut issued_per_sec = 0.0;
         for w in workers {
-            let (sjrn, rmt) = w.join().unwrap();
+            let (ips, sjrn, rmt) = w.join().unwrap();
+            issued_per_sec += ips;
             for (variant, h) in sjrn {
                 sjrn_t
                     .get_mut(&variant)
@@ -197,21 +198,13 @@ impl<'a> WorkloadBuilder<'a> {
         }
 
         // all done!
-        let took = start.elapsed();
         println!(
-            "# requested ops/s: {:.2}",
+            "# target ops/s: {:.2}",
             BASE_OPS_PER_MIN as f64 * self.load.req_scale / 60.0,
         );
-        println!(
-            "# generated ops/s: {:.2}",
-            generated as f64
-                / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
-        );
-        println!(
-            "# achieved ops/s: {:.2}",
-            (generated - dropped) as f64
-                / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
-        );
+        println!("# generated ops/s: {:.2}", generated_per_sec);
+        println!("# achieved ops/s: {:.2}", issued_per_sec);
+        println!("# dropped requests: {}", dropped);
 
         if let Some(h) = self.histogram_file {
             match fs::File::create(h) {

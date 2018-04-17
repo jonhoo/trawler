@@ -18,11 +18,12 @@ pub(super) fn run<C>(
     mut core: tokio_core::reactor::Core,
     client: C,
     jobs: crossbeam_channel::Receiver<WorkerCommand>,
-) -> (Stats, Stats)
+) -> (f64, Stats, Stats)
 where
     C: LobstersClient,
 {
     let mut start = None;
+    let mut nissued = 0;
     let client = Rc::new(client);
     let in_flight = Rc::new(RefCell::new(0));
     let handle = core.handle();
@@ -68,6 +69,12 @@ where
                         core.turn(None);
                     }
                     *in_flight.borrow_mut() += 1;
+                }
+
+                if let Some(start) = start {
+                    if issued.duration_since(start) > warmup {
+                        nissued += 1;
+                    }
                 }
 
                 let in_flight = in_flight.clone();
@@ -124,9 +131,17 @@ where
         }
     }
 
+    let took = (start.unwrap() + warmup).elapsed();
+    let per_second = if took == time::Duration::new(0, 0) {
+        0.0
+    } else {
+        nissued as f64 / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
+    };
+
     let mut sjrn = sjrn.borrow_mut();
     let mut rmt = rmt.borrow_mut();
     (
+        per_second,
         mem::replace(&mut *sjrn, HashMap::default()),
         mem::replace(&mut *rmt, HashMap::default()),
     )
