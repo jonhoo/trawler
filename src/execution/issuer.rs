@@ -131,12 +131,16 @@ where
         }
     }
 
-    let took = (start.unwrap() + warmup).elapsed();
-    let per_second = if took == time::Duration::new(0, 0) {
-        0.0
-    } else {
-        nissued as f64 / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
-    };
+    let count_from = start.unwrap() + warmup;
+    let mut per_second = 0.0;
+    let now = time::Instant::now();
+    if now > count_from {
+        let took = count_from.duration_since(now);
+        if took != time::Duration::new(0, 0) {
+            per_second = nissued as f64
+                / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
+        }
+    }
 
     let mut sjrn = sjrn.borrow_mut();
     let mut rmt = rmt.borrow_mut();
