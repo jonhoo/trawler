@@ -7,7 +7,6 @@ use hdrhistogram::Histogram;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::atomic;
 use std::{mem, time};
 use tokio_core;
 
@@ -33,13 +32,25 @@ where
     let rmt = Rc::new(RefCell::new(HashMap::default()));
 
     loop {
-        match jobs.try_recv() {
+        let x = if *in_flight.borrow() == 0 {
+            // nothing in flight, so no sense in spinning
+            jobs.recv()
+                .map_err(|_| crossbeam_channel::TryRecvError::Disconnected)
+        } else {
+            // TODO
+            // we need to split our attention between getting jobs and turning the core
+            // once we have a futures-aware mpmc channel, we won't have to hack like this
+            // track https://github.com/crossbeam-rs/crossbeam-channel/issues/22
+            jobs.try_recv()
+        };
+
+        match x {
             Err(crossbeam_channel::TryRecvError::Disconnected) => break,
             Err(crossbeam_channel::TryRecvError::Empty) => {
-                // TODO: once we have a futures-aware mpmc channel, we won't have to hack like this
-                // track https://github.com/crossbeam-rs/crossbeam-channel/issues/22
-                core.turn(Some(time::Duration::new(0, 0)));
-                atomic::spin_loop_hint();
+                // spend a little bit of time waiting for in-flight things to progress
+                // we *could* give a timeout of 0.0 here, but then we could easily start spinning
+                // it's a little sad that we only turn once between every time we try_recv though
+                core.turn(Some(time::Duration::new(0, 100_000)));
             }
             Ok(WorkerCommand::Wait(barrier)) => {
                 // when we get a barrier, wait for all pending requests to complete
