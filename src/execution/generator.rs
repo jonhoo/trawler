@@ -121,7 +121,7 @@ where
     let mut per_second = 0.0;
     let now = time::Instant::now();
     if now > count_from {
-        let took = count_from.duration_since(now);
+        let took = now.duration_since(count_from);
         if took != time::Duration::new(0, 0) {
             per_second =
                 ops as f64 / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
