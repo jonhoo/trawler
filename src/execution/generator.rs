@@ -1,10 +1,10 @@
-use WorkerCommand;
 use client::{LobstersClient, LobstersRequest, Vote};
 use crossbeam_channel;
 use execution::{self, id_to_slug, Sampler, MAX_SLUGGABLE_ID};
 use rand::{self, Rng};
 use std::sync::atomic;
 use std::time;
+use WorkerCommand;
 
 pub(super) fn run<C>(
     load: execution::Workload,

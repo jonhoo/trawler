@@ -1,4 +1,3 @@
-use WorkerCommand;
 use client::LobstersClient;
 use crossbeam_channel;
 use execution::Stats;
@@ -9,6 +8,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::{mem, time};
 use tokio_core;
+use WorkerCommand;
 
 pub(super) fn run<C>(
     warmup: time::Duration,

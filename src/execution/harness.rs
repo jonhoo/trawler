@@ -1,5 +1,3 @@
-use BASE_OPS_PER_MIN;
-use WorkerCommand;
 use client::{LobstersClient, LobstersRequest};
 use crossbeam_channel;
 use execution::{self, id_to_slug, Sampler};
@@ -7,6 +5,8 @@ use rand::{self, Rng};
 use std::sync::{Arc, Barrier, Mutex};
 use std::{thread, time};
 use tokio_core;
+use WorkerCommand;
+use BASE_OPS_PER_MIN;
 
 pub(crate) fn run<C, I>(
     load: execution::Workload,

@@ -249,26 +249,28 @@ impl trawler::LobstersClient for WebClient {
             futures::future::Either::B(futures::finished(req))
         };
 
-        Box::new(req.and_then(move |req| {
-            this.client.request(req).and_then(move |res| {
-                if res.status() != expected {
-                    use futures::Stream;
+        Box::new(
+            req.and_then(move |req| {
+                this.client.request(req).and_then(move |res| {
+                    if res.status() != expected {
+                        use futures::Stream;
 
-                    let status = res.status();
-                    futures::future::Either::A(res.body().concat2().map(move |body| {
-                        panic!(
-                            "{:?} status response. You probably forgot to prime.\n{}",
-                            status,
-                            ::std::str::from_utf8(&*body).unwrap(),
-                        );
-                    }))
-                } else {
-                    futures::future::Either::B(futures::finished(sent.elapsed()))
-                }
-            })
-        }).map_err(|e| {
-            eprintln!("hyper: {:?}", e);
-        }))
+                        let status = res.status();
+                        futures::future::Either::A(res.body().concat2().map(move |body| {
+                            panic!(
+                                "{:?} status response. You probably forgot to prime.\n{}",
+                                status,
+                                ::std::str::from_utf8(&*body).unwrap(),
+                            );
+                        }))
+                    } else {
+                        futures::future::Either::B(futures::finished(sent.elapsed()))
+                    }
+                })
+            }).map_err(|e| {
+                eprintln!("hyper: {:?}", e);
+            }),
+        )
     }
 }
 
