@@ -111,7 +111,7 @@ where
                 barrier.wait();
             }
 
-            let parent = if rng.gen_weighted_bool(2) {
+            let parent = if rng.gen_bool(0.5) {
                 // we need to pick a parent in the same story
                 let generated_comments = id - story;
                 // how many stories to we know there are per story?

@@ -1,5 +1,6 @@
 use hdrhistogram::Histogram;
 use histogram_sampler;
+use rand::distributions::Distribution;
 use std::collections::HashMap;
 use std::{mem, time};
 use LobstersRequest;
@@ -16,7 +17,6 @@ struct Sampler {
 }
 
 use rand;
-use rand::distributions::IndependentSample;
 impl Sampler {
     fn new(scale: f64) -> Self {
         // compute how many of each thing there will be in the database after scaling by mem_scale
@@ -39,7 +39,7 @@ impl Sampler {
     }
 
     fn user<R: rand::Rng>(&self, rng: &mut R) -> u32 {
-        self.votes_per_user.ind_sample(rng) as u32
+        self.votes_per_user.sample(rng) as u32
     }
 
     fn nusers(&self) -> u32 {
@@ -47,11 +47,11 @@ impl Sampler {
     }
 
     fn comment_for_vote<R: rand::Rng>(&self, rng: &mut R) -> u32 {
-        self.votes_per_comment.ind_sample(rng) as u32
+        self.votes_per_comment.sample(rng) as u32
     }
 
     fn story_for_vote<R: rand::Rng>(&self, rng: &mut R) -> u32 {
-        self.votes_per_story.ind_sample(rng) as u32
+        self.votes_per_story.sample(rng) as u32
     }
 
     fn nstories(&self) -> u32 {
@@ -59,7 +59,7 @@ impl Sampler {
     }
 
     fn story_for_comment<R: rand::Rng>(&self, rng: &mut R) -> u32 {
-        self.comments_per_story.ind_sample(rng) as u32
+        self.comments_per_story.sample(rng) as u32
     }
 
     fn ncomments(&self) -> u32 {

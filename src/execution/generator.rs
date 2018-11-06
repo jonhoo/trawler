@@ -1,6 +1,7 @@
 use client::{LobstersClient, LobstersRequest, Vote};
 use crossbeam_channel;
 use execution::{self, id_to_slug, Sampler, MAX_SLUGGABLE_ID};
+use rand::distributions::Distribution;
 use rand::{self, Rng};
 use std::sync::atomic;
 use std::time;
@@ -31,7 +32,6 @@ where
 
     let mut next = time::Instant::now();
     while next < end {
-        use rand::distributions::IndependentSample;
         let now = time::Instant::now();
 
         if next > now {
@@ -115,7 +115,7 @@ where
             .unwrap();
 
         // schedule next delivery
-        next += time::Duration::new(0, interarrival_ns.ind_sample(&mut rng) as u32);
+        next += time::Duration::new(0, interarrival_ns.sample(&mut rng) as u32);
     }
 
     let mut per_second = 0.0;
