@@ -159,16 +159,14 @@ impl<'a> WorkloadBuilder<'a> {
                             variant,
                             Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap(),
                         )
-                    })
-                    .collect();
+                    }).collect();
                 let rmt = LobstersRequest::all()
                     .map(|variant| {
                         (
                             variant,
                             Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap(),
                         )
-                    })
-                    .collect();
+                    }).collect();
                 (sjrn, rmt)
             };
         let (mut sjrn_t, mut rmt_t) = hists;

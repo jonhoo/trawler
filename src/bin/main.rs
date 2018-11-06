@@ -176,8 +176,7 @@ impl trawler::LobstersClient for WebClient {
                                 Vote::Up => "upvote",
                                 Vote::Down => "unvote",
                             }
-                        ))
-                        .unwrap()
+                        )).unwrap()
                         .as_ref(),
                 ).unwrap();
                 hyper::Request::new(hyper::Method::Post, url)
@@ -192,8 +191,7 @@ impl trawler::LobstersClient for WebClient {
                                 Vote::Up => "upvote",
                                 Vote::Down => "unvote",
                             }
-                        ))
-                        .unwrap()
+                        )).unwrap()
                         .as_ref(),
                 ).unwrap();
                 hyper::Request::new(hyper::Method::Post, url)
@@ -284,43 +282,37 @@ fn main() {
                 .takes_value(true)
                 .default_value("1.0")
                 .help("Memory scale factor for workload"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("reqscale")
                 .long("reqscale")
                 .takes_value(true)
                 .default_value("1.0")
                 .help("Reuest load scale factor for workload"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("issuers")
                 .short("i")
                 .long("issuers")
                 .takes_value(true)
                 .default_value("1")
                 .help("Number of issuers to run"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("prime")
                 .long("prime")
                 .help("Set if the backend must be primed with initial stories and comments."),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("runtime")
                 .short("r")
                 .long("runtime")
                 .takes_value(true)
                 .default_value("30")
                 .help("Benchmark runtime in seconds"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("warmup")
                 .long("warmup")
                 .takes_value(true)
                 .default_value("10")
                 .help("Warmup time in seconds"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("histogram")
                 .long("histogram")
                 .help("Use file-based serialized HdrHistograms")
@@ -330,25 +322,23 @@ fn main() {
                      There are two histograms, written out in order: \
                      sojourn and remote.",
                 ),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("prefix")
                 .value_name("URL-PREFIX")
                 .takes_value(true)
                 .default_value("http://localhost:3000")
                 .index(1),
-        )
-        .get_matches();
+        ).get_matches();
 
     let mut wl = trawler::WorkloadBuilder::default();
     wl.scale(
         value_t_or_exit!(args, "memscale", f64),
         value_t_or_exit!(args, "reqscale", f64),
     ).issuers(value_t_or_exit!(args, "issuers", usize))
-        .time(
-            time::Duration::from_secs(value_t_or_exit!(args, "warmup", u64)),
-            time::Duration::from_secs(value_t_or_exit!(args, "runtime", u64)),
-        );
+    .time(
+        time::Duration::from_secs(value_t_or_exit!(args, "warmup", u64)),
+        time::Duration::from_secs(value_t_or_exit!(args, "runtime", u64)),
+    );
 
     if let Some(h) = args.value_of("histogram") {
         wl.with_histogram(h);

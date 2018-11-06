@@ -53,10 +53,8 @@ where
                     execution::issuer::run(warmup, runtime, in_flight, core, c, jobs)
                     // NOTE: there may still be a bunch of requests in the queue here,
                     // but core.run() will return when the stream is closed.
-                })
-                .unwrap()
-        })
-        .collect();
+                }).unwrap()
+        }).collect();
 
     let barrier = Arc::new(Barrier::new(nthreads + 1));
     let now = time::Instant::now();
@@ -166,8 +164,7 @@ where
                 .name(format!("load-gen{}", geni))
                 .spawn(move || execution::generator::run::<C>(load, sampler, pool, target))
                 .unwrap()
-        })
-        .collect();
+        }).collect();
 
     drop(pool);
     let gps = generators.into_iter().map(|gen| gen.join().unwrap()).sum();
