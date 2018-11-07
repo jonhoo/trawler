@@ -4,59 +4,28 @@ use execution::{self, id_to_slug, Sampler};
 use rand::{self, Rng};
 use std::sync::{Arc, Barrier, Mutex};
 use std::{thread, time};
-use tokio_core;
+use tokio::prelude::*;
 use WorkerCommand;
 use BASE_OPS_PER_MIN;
 
-pub(crate) fn run<C, I>(
+pub(crate) fn run<C>(
     load: execution::Workload,
     in_flight: usize,
-    mut factory: I,
+    client: C,
     prime: bool,
-) -> (
-    f64,
-    Vec<thread::JoinHandle<(f64, execution::Stats, execution::Stats)>>,
-    usize,
-)
+) -> (f64, Vec<(f64, execution::Stats, execution::Stats)>, usize)
 where
-    I: Send + 'static,
-    C: LobstersClient<Factory = I> + 'static,
+    C: LobstersClient + 'static,
 {
-    // generating a request takes a while because we have to generate random numbers (including
-    // zipfs). so, depending on the target load, we may need more than one load generation
-    // thread. we'll make them all share the pool of issuers though.
     let mut target = BASE_OPS_PER_MIN as f64 * load.req_scale / 60.0;
-    let generator_capacity = 100_000.0; // req/s == 10 µs to generate a request
-    let ngen = (target / generator_capacity).ceil() as usize;
-    target /= ngen as f64;
-
-    let nthreads = load.threads;
     let warmup = load.warmup;
     let runtime = load.runtime;
 
-    if prime {
-        C::setup(&mut factory);
-    }
+    let mut rt = tokio::runtime::Runtime::new().unwrap();
 
-    let factory = Arc::new(Mutex::new(factory));
-    let (pool, jobs) = crossbeam_channel::unbounded();
-    let workers: Vec<_> = (0..nthreads)
-        .map(|i| {
-            let jobs = jobs.clone();
-            let factory = factory.clone();
-            thread::Builder::new()
-                .name(format!("issuer-{}", i))
-                .spawn(move || {
-                    let core = tokio_core::reactor::Core::new().unwrap();
-                    let c = C::spawn(&mut *factory.lock().unwrap(), &core.handle());
+    // TODO: all the stuff from
+    //execution::issuer::run(warmup, runtime, in_flight, core, c, jobs)
 
-                    execution::issuer::run(warmup, runtime, in_flight, core, c, jobs)
-                    // NOTE: there may still be a bunch of requests in the queue here,
-                    // but core.run() will return when the stream is closed.
-                }).unwrap()
-        }).collect();
-
-    let barrier = Arc::new(Barrier::new(nthreads + 1));
     let now = time::Instant::now();
 
     // compute how many of each thing there will be in the database after scaling by mem_scale
@@ -64,49 +33,37 @@ where
     let nstories = sampler.nstories();
 
     // then, log in all the users
+    let mut setup = futures::stream::FuturesOrdered::new();
     for u in 0..sampler.nusers() {
-        pool.send(WorkerCommand::Request(now, Some(u), LobstersRequest::Login))
-            .unwrap();
+        setup.push(client.handle(Some(u), LobstersRequest::Login));
     }
+    rt.block_on(setup.fold(0, |_, _| Ok(0))).unwrap();
 
     if prime {
         println!("--> priming database");
         let mut rng = rand::thread_rng();
 
-        // wait for all threads to be ready
-        // we don't normally know which worker thread will receive any given command (it's mpmc
-        // after all), but since a ::Wait causes the receiving thread to *block*, we know that once
-        // it receives one, it can't receive another until the barrier has been passed! Therefore,
-        // sending `nthreads` barriers should ensure that every thread gets one
-        for _ in 0..nthreads {
-            pool.send(WorkerCommand::Wait(barrier.clone())).unwrap();
-        }
-        barrier.wait();
-
         // first, we need to prime the database stories!
+        let mut setup = futures::stream::FuturesOrdered::new();
         for id in 0..nstories {
             // NOTE: we're assuming that users who vote much also submit many stories
             let req = LobstersRequest::Submit {
                 id: id_to_slug(id),
                 title: format!("Base article {}", id),
             };
-            pool.send(WorkerCommand::Request(
-                now,
-                Some(sampler.user(&mut rng)),
-                req,
-            )).unwrap();
+            setup.push(client.handle(Some(sampler.user(&mut rng)), req));
         }
+        rt.block_on(setup.fold(0, |_, _| Ok(0))).unwrap();
 
         // and as many comments
+        let mut setup = futures::stream::FuturesOrdered::new();
         for id in 0..sampler.ncomments() {
             let story = id % nstories; // TODO: distribution
 
             // synchronize occasionally to ensure that we can safely generate parent comments
             if story == 0 {
-                for _ in 0..nthreads {
-                    pool.send(WorkerCommand::Wait(barrier.clone())).unwrap();
-                }
-                barrier.wait();
+                rt.block_on(setup.fold(0, |_, _| Ok(0))).unwrap();
+                setup = futures::stream::FuturesOrdered::new();
             }
 
             let parent = if rng.gen_bool(0.5) {
@@ -132,39 +89,15 @@ where
             };
 
             // NOTE: we're assuming that users who vote much also submit many stories
-            pool.send(WorkerCommand::Request(
-                now,
-                Some(sampler.user(&mut rng)),
-                req,
-            )).unwrap();
+            setup.push(client.handle(Some(sampler.user(&mut rng)), req));
         }
 
         // wait for all threads to finish priming comments
-        // the addition of the ::Wait barrier will also ensure that start is (re)set
-        for _ in 0..nthreads {
-            pool.send(WorkerCommand::Wait(barrier.clone())).unwrap();
-        }
-        barrier.wait();
+        rt.block_on(setup.fold(0, |_, _| Ok(0))).unwrap();
         println!("--> finished priming database");
     }
 
-    // wait for all threads to be ready (and set their start time correctly)
-    for _ in 0..nthreads {
-        pool.send(WorkerCommand::Start(barrier.clone())).unwrap();
-    }
-    barrier.wait();
-
-    let generators: Vec<_> = (0..ngen)
-        .map(|geni| {
-            let pool = pool.clone();
-            let load = load.clone();
-            let sampler = sampler.clone();
-
-            thread::Builder::new()
-                .name(format!("load-gen{}", geni))
-                .spawn(move || execution::generator::run::<C>(load, sampler, pool, target))
-                .unwrap()
-        }).collect();
+    // TODO: execution::generator::run::<C>(load, sampler, pool, target))
 
     drop(pool);
     let gps = generators.into_iter().map(|gen| gen.join().unwrap()).sum();

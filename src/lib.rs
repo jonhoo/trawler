@@ -22,13 +22,12 @@
 //! Rails application, you must apply the patches in `lobsters.diff` first.
 #![deny(missing_docs)]
 
-extern crate crossbeam_channel;
 extern crate futures;
 extern crate hdrhistogram;
 extern crate histogram_sampler;
 extern crate libc;
 extern crate rand;
-extern crate tokio_core;
+extern crate tokio;
 extern crate zipf;
 
 mod client;
@@ -70,8 +69,6 @@ impl<'a> Default for WorkloadBuilder<'a> {
                 mem_scale: 1.0,
                 req_scale: 1.0,
 
-                threads: 1,
-
                 warmup: time::Duration::from_secs(10),
                 runtime: time::Duration::from_secs(30),
             },
@@ -92,14 +89,6 @@ impl<'a> WorkloadBuilder<'a> {
     pub fn scale(&mut self, mem_factor: f64, req_factor: f64) -> &mut Self {
         self.load.mem_scale = mem_factor;
         self.load.req_scale = req_factor;
-        self
-    }
-
-    /// Set the number of threads used to issue requests to the backend.
-    ///
-    /// Each thread can issue `in_flight` requests simultaneously.
-    pub fn issuers(&mut self, n: usize) -> &mut Self {
-        self.load.threads = n;
         self
     }
 
@@ -131,15 +120,24 @@ impl<'a> WorkloadBuilder<'a> {
 impl<'a> WorkloadBuilder<'a> {
     /// Run this workload with clients spawned from the given factory.
     ///
-    /// If `prime` is true, the database will be seeded with stories and comments according to the
-    /// memory scaling factory before the benchmark starts. If the site has already been primed,
-    /// there is no need to prime again unless the backend is emptied or the memory scale factor is
-    /// changed. Note that priming does not delete the database, nor detect the current scale, so
-    /// always empty the backend before calling `run` with `prime` set.
-    pub fn run<C, I>(&self, factory: I, prime: bool)
+    /// If `prime` returns true, the database will be seeded with stories and comments according to
+    /// the memory scaling factory before the benchmark starts. If the site has already been
+    /// primed, there is no need to prime again unless the backend is emptied or the memory scale
+    /// factor is changed. Note that priming does not delete the database, nor detect the current
+    /// scale, so always empty the backend before calling `run` with `prime` set.
+    ///
+    /// Normally, priming would consist of running the lobsters setup routine:
+    ///
+    /// ```console
+    /// $ rails db:drop
+    /// $ rails db:create
+    /// $ rails db:schema:load
+    /// $ rails db:seed
+    /// ```
+    pub fn run<C, P>(&self, client: C, prime: P)
     where
-        I: Send + 'static,
-        C: LobstersClient<Factory = I> + 'static,
+        C: LobstersClient + Send + 'static,
+        P: FnOnce() -> bool,
     {
         let hists: (HashMap<_, _>, HashMap<_, _>) =
             if let Some(mut f) = self.histogram_file.and_then(|h| fs::File::open(h).ok()) {
@@ -159,21 +157,25 @@ impl<'a> WorkloadBuilder<'a> {
                             variant,
                             Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap(),
                         )
-                    }).collect();
+                    })
+                    .collect();
                 let rmt = LobstersRequest::all()
                     .map(|variant| {
                         (
                             variant,
                             Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap(),
                         )
-                    }).collect();
+                    })
+                    .collect();
                 (sjrn, rmt)
             };
         let (mut sjrn_t, mut rmt_t) = hists;
 
+        let prime = prime();
+
         // actually run the workload
         let (generated_per_sec, workers, dropped) =
-            execution::harness::run::<C, _>(self.load.clone(), self.max_in_flight, factory, prime);
+            execution::harness::run::<C, _>(self.load.clone(), self.max_in_flight, client, prime);
 
         let mut issued_per_sec = 0.0;
         for w in workers {

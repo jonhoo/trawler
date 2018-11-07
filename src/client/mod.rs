@@ -14,38 +14,12 @@ use tokio_core;
 /// each have their own `LobstersClient`. The associated `Factory` type tells the generator how to
 /// spawn more clients.
 pub trait LobstersClient {
-    /// The type used to spawn more clients of this type.
-    type Factory;
-
-    /// Set up a fresh instance of the backend before priming.
-    ///
-    /// Implementing this allows benchmarking a backend without ever running the lobste.rs
-    /// application. Normally, a backend would need to run the lobsters setup routine:
-    ///
-    /// ```console
-    /// $ rails db:drop
-    /// $ rails db:create
-    /// $ rails db:schema:load
-    /// $ rails db:seed
-    /// ```
-    ///
-    /// The default implementation of this method just prints an informational message saying that
-    /// the backend was not re-created.
-    fn setup(&mut Self::Factory) {
-        eprintln!("note: did not re-create backend as lobsters client did not implement setup()");
-        eprintln!("note: if priming fails, make sure you have run the lobsters setup scripts");
-    }
-
-    /// Spawn a new client for an issuer running the given tokio reactor.
-    fn spawn(&mut Self::Factory, &tokio_core::reactor::Handle) -> Self;
+    /// The `Future` type returned from `handle`.
+    type HandleFuture: futures::Future<Item = time::Duration, Error = ()> + Send;
 
     /// Handle the given lobste.rs request, made on behalf of the given user,
     /// returning a future that resolves when the request has been satisfied.
-    fn handle(
-        Rc<Self>,
-        Option<UserId>,
-        LobstersRequest,
-    ) -> Box<futures::Future<Item = time::Duration, Error = ()>>;
+    fn handle(&mut self, Option<UserId>, LobstersRequest) -> Self::HandleFuture;
 }
 
 /// A unique lobste.rs six-character story id.
@@ -177,7 +151,8 @@ impl LobstersRequest {
                 title: String::new(),
             }),
             mem::discriminant(&LobstersRequest::Logout),
-        ].into_iter()
+        ]
+        .into_iter()
     }
 
     /// Give a textual representation of the given `LobstersRequest` discriminant.
@@ -198,18 +173,20 @@ impl LobstersRequest {
             d if d == mem::discriminant(&LobstersRequest::CommentVote([0; 6], Vote::Up)) => {
                 "CommentVote"
             }
-            d if d == mem::discriminant(&LobstersRequest::Submit {
-                id: [0; 6],
-                title: String::new(),
-            }) =>
+            d if d
+                == mem::discriminant(&LobstersRequest::Submit {
+                    id: [0; 6],
+                    title: String::new(),
+                }) =>
             {
                 "Submit"
             }
-            d if d == mem::discriminant(&LobstersRequest::Comment {
-                id: [0; 6],
-                story: [0; 6],
-                parent: None,
-            }) =>
+            d if d
+                == mem::discriminant(&LobstersRequest::Comment {
+                    id: [0; 6],
+                    story: [0; 6],
+                    parent: None,
+                }) =>
             {
                 "Comment"
             }
@@ -319,7 +296,8 @@ mod tests {
             LobstersRequest::Submit {
                 id: [48, 48, 48, 48, 57, 97],
                 title: String::from("foo"),
-            }.describe(),
+            }
+            .describe(),
             "POST /stories [00009a]"
         );
         assert_eq!(
@@ -327,7 +305,8 @@ mod tests {
                 id: [48, 48, 48, 48, 57, 97],
                 story: [48, 48, 48, 48, 57, 98],
                 parent: Some([48, 48, 48, 48, 57, 99]),
-            }.describe(),
+            }
+            .describe(),
             "POST /comments/00009c [00009a; 00009b]"
         );
         assert_eq!(
@@ -335,7 +314,8 @@ mod tests {
                 id: [48, 48, 48, 48, 57, 97],
                 story: [48, 48, 48, 48, 57, 98],
                 parent: None,
-            }.describe(),
+            }
+            .describe(),
             "POST /comments [00009a; 00009b]"
         );
     }
