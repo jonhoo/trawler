@@ -1,6 +1,6 @@
 [package]
 name = "trawler"
-version = "0.5.11"
+version = "0.5.12"
 
 description = "A workload generator that emulates the traffic to lobste.rs"
 readme = "README.md"
@@ -21,6 +21,7 @@ build = "data-import.rs"
 
 [badges]
 travis-ci = { repository = "jonhoo/tsunami" }
+maintenance = { status = "actively-developed" }
 
 [features]
 cli = ["clap", "hyper", "url", "regex", "lazy_static"]
@@ -30,10 +31,10 @@ default = ["cli"]
 slog = "2.0.6"
 slog-term = "2.0.1"
 libc = "0.2"
-rand = "0.5.0"
-zipf = "4.0.0"
+rand = "0.6.0"
+zipf = "5.0.0"
 hdrhistogram = "6.0.0"
-histogram-sampler = "0.2"
+histogram-sampler = "0.3"
 
 crossbeam-channel = "0.3"
 tokio-core = "0.1"

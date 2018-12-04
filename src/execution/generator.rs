@@ -28,7 +28,7 @@ where
 
     let mut ops = 0;
     let mut rng = rand::thread_rng();
-    let interarrival_ns = rand::distributions::exponential::Exp::new(target * 1e-9);
+    let interarrival_ns = rand::distributions::Exp::new(target * 1e-9);
 
     let mut next = time::Instant::now();
     while next < end {
