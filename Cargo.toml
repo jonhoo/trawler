@@ -1,6 +1,7 @@
 [package]
 name = "trawler"
 version = "0.5.12"
+edition = "2018"
 
 description = "A workload generator that emulates the traffic to lobste.rs"
 readme = "README.md"

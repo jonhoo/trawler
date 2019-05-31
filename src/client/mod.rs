@@ -31,20 +31,20 @@ pub trait LobstersClient {
     ///
     /// The default implementation of this method just prints an informational message saying that
     /// the backend was not re-created.
-    fn setup(&mut Self::Factory) {
+    fn setup(_factory: &mut Self::Factory) {
         eprintln!("note: did not re-create backend as lobsters client did not implement setup()");
         eprintln!("note: if priming fails, make sure you have run the lobsters setup scripts");
     }
 
-    /// Spawn a new client for an issuer running the given tokio reactor.
-    fn spawn(&mut Self::Factory, &tokio_core::reactor::Handle) -> Self;
+    /// Spawn a new client for an issuer running on the given reactor core.
+    fn spawn(factory: &mut Self::Factory, reactor: &tokio_core::reactor::Handle) -> Self;
 
     /// Handle the given lobste.rs request, made on behalf of the given user,
     /// returning a future that resolves when the request has been satisfied.
     fn handle(
-        Rc<Self>,
-        Option<UserId>,
-        LobstersRequest,
+        this: Rc<Self>,
+        user: Option<UserId>,
+        request: LobstersRequest,
     ) -> Box<futures::Future<Item = time::Duration, Error = ()>>;
 }
 
@@ -177,7 +177,8 @@ impl LobstersRequest {
                 title: String::new(),
             }),
             mem::discriminant(&LobstersRequest::Logout),
-        ].into_iter()
+        ]
+        .into_iter()
     }
 
     /// Give a textual representation of the given `LobstersRequest` discriminant.
@@ -198,18 +199,20 @@ impl LobstersRequest {
             d if d == mem::discriminant(&LobstersRequest::CommentVote([0; 6], Vote::Up)) => {
                 "CommentVote"
             }
-            d if d == mem::discriminant(&LobstersRequest::Submit {
-                id: [0; 6],
-                title: String::new(),
-            }) =>
+            d if d
+                == mem::discriminant(&LobstersRequest::Submit {
+                    id: [0; 6],
+                    title: String::new(),
+                }) =>
             {
                 "Submit"
             }
-            d if d == mem::discriminant(&LobstersRequest::Comment {
-                id: [0; 6],
-                story: [0; 6],
-                parent: None,
-            }) =>
+            d if d
+                == mem::discriminant(&LobstersRequest::Comment {
+                    id: [0; 6],
+                    story: [0; 6],
+                    parent: None,
+                }) =>
             {
                 "Comment"
             }
@@ -319,7 +322,8 @@ mod tests {
             LobstersRequest::Submit {
                 id: [48, 48, 48, 48, 57, 97],
                 title: String::from("foo"),
-            }.describe(),
+            }
+            .describe(),
             "POST /stories [00009a]"
         );
         assert_eq!(
@@ -327,7 +331,8 @@ mod tests {
                 id: [48, 48, 48, 48, 57, 97],
                 story: [48, 48, 48, 48, 57, 98],
                 parent: Some([48, 48, 48, 48, 57, 99]),
-            }.describe(),
+            }
+            .describe(),
             "POST /comments/00009c [00009a; 00009b]"
         );
         assert_eq!(
@@ -335,7 +340,8 @@ mod tests {
                 id: [48, 48, 48, 48, 57, 97],
                 story: [48, 48, 48, 48, 57, 98],
                 parent: None,
-            }.describe(),
+            }
+            .describe(),
             "POST /comments [00009a; 00009b]"
         );
     }

@@ -22,18 +22,9 @@
 //! Rails application, you must apply the patches in `lobsters.diff` first.
 #![deny(missing_docs)]
 
-extern crate crossbeam_channel;
-extern crate futures;
-extern crate hdrhistogram;
-extern crate histogram_sampler;
-extern crate libc;
-extern crate rand;
-extern crate tokio_core;
-extern crate zipf;
-
 mod client;
-pub use client::{CommentId, StoryId, UserId};
-pub use client::{LobstersClient, LobstersRequest, Vote};
+pub use self::client::{CommentId, StoryId, UserId};
+pub use self::client::{LobstersClient, LobstersRequest, Vote};
 
 mod execution;
 
@@ -159,14 +150,16 @@ impl<'a> WorkloadBuilder<'a> {
                             variant,
                             Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap(),
                         )
-                    }).collect();
+                    })
+                    .collect();
                 let rmt = LobstersRequest::all()
                     .map(|variant| {
                         (
                             variant,
                             Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap(),
                         )
-                    }).collect();
+                    })
+                    .collect();
                 (sjrn, rmt)
             };
         let (mut sjrn_t, mut rmt_t) = hists;

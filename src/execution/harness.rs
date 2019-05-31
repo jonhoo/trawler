@@ -1,12 +1,12 @@
-use client::{LobstersClient, LobstersRequest};
+use crate::client::{LobstersClient, LobstersRequest};
+use crate::execution::{self, id_to_slug, Sampler};
+use crate::WorkerCommand;
+use crate::BASE_OPS_PER_MIN;
 use crossbeam_channel;
-use execution::{self, id_to_slug, Sampler};
 use rand::{self, Rng};
 use std::sync::{Arc, Barrier, Mutex};
 use std::{thread, time};
 use tokio_core;
-use WorkerCommand;
-use BASE_OPS_PER_MIN;
 
 pub(crate) fn run<C, I>(
     load: execution::Workload,
@@ -53,8 +53,10 @@ where
                     execution::issuer::run(warmup, runtime, in_flight, core, c, jobs)
                     // NOTE: there may still be a bunch of requests in the queue here,
                     // but core.run() will return when the stream is closed.
-                }).unwrap()
-        }).collect();
+                })
+                .unwrap()
+        })
+        .collect();
 
     let barrier = Arc::new(Barrier::new(nthreads + 1));
     let now = time::Instant::now();
@@ -94,7 +96,8 @@ where
                 now,
                 Some(sampler.user(&mut rng)),
                 req,
-            )).unwrap();
+            ))
+            .unwrap();
         }
 
         // and as many comments
@@ -136,7 +139,8 @@ where
                 now,
                 Some(sampler.user(&mut rng)),
                 req,
-            )).unwrap();
+            ))
+            .unwrap();
         }
 
         // wait for all threads to finish priming comments
@@ -164,7 +168,8 @@ where
                 .name(format!("load-gen{}", geni))
                 .spawn(move || execution::generator::run::<C>(load, sampler, pool, target))
                 .unwrap()
-        }).collect();
+        })
+        .collect();
 
     drop(pool);
     let gps = generators.into_iter().map(|gen| gen.join().unwrap()).sum();

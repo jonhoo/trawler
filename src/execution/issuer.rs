@@ -1,6 +1,7 @@
-use client::LobstersClient;
+use crate::client::LobstersClient;
+use crate::execution::Stats;
+use crate::WorkerCommand;
 use crossbeam_channel;
-use execution::Stats;
 use futures::Future;
 use hdrhistogram::Histogram;
 use std::cell::RefCell;
@@ -8,7 +9,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::{mem, time};
 use tokio_core;
-use WorkerCommand;
 
 pub(super) fn run<C>(
     warmup: time::Duration,
@@ -108,7 +108,8 @@ where
                                 .entry(variant)
                                 .or_insert_with(|| {
                                     Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
-                                }).saturating_record(
+                                })
+                                .saturating_record(
                                     remote_t.as_secs() * 1_000
                                         + remote_t.subsec_nanos() as u64 / 1_000_000,
                                 );
@@ -116,7 +117,8 @@ where
                                 .entry(variant)
                                 .or_insert_with(|| {
                                     Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
-                                }).saturating_record(
+                                })
+                                .saturating_record(
                                     sjrn_t.as_secs() * 1_000
                                         + sjrn_t.subsec_nanos() as u64 / 1_000_000,
                                 );

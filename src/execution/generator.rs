@@ -1,11 +1,11 @@
-use client::{LobstersClient, LobstersRequest, Vote};
+use crate::client::{LobstersClient, LobstersRequest, Vote};
+use crate::execution::{self, id_to_slug, Sampler, MAX_SLUGGABLE_ID};
+use crate::WorkerCommand;
 use crossbeam_channel;
-use execution::{self, id_to_slug, Sampler, MAX_SLUGGABLE_ID};
 use rand::distributions::Distribution;
 use rand::{self, Rng};
 use std::sync::atomic;
 use std::time;
-use WorkerCommand;
 
 pub(super) fn run<C>(
     load: execution::Workload,

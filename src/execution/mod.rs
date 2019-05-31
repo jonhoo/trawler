@@ -1,10 +1,10 @@
+use crate::LobstersRequest;
+use crate::{COMMENTS_PER_STORY, VOTES_PER_COMMENT, VOTES_PER_STORY, VOTES_PER_USER};
 use hdrhistogram::Histogram;
 use histogram_sampler;
 use rand::distributions::Distribution;
 use std::collections::HashMap;
 use std::{mem, time};
-use LobstersRequest;
-use {COMMENTS_PER_STORY, VOTES_PER_COMMENT, VOTES_PER_STORY, VOTES_PER_USER};
 
 type Stats = HashMap<mem::Discriminant<LobstersRequest>, Histogram<u64>>;
 
