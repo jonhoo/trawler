@@ -106,6 +106,4 @@ pub(crate) struct Workload {
     pub(crate) runtime: time::Duration,
 }
 
-pub(crate) mod generator;
 pub(crate) mod harness;
-pub(crate) mod issuer;

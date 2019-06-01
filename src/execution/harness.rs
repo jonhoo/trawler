@@ -1,103 +1,112 @@
-use crate::client::{LobstersClient, LobstersRequest};
-use crate::execution::{self, id_to_slug, Sampler};
-use crate::WorkerCommand;
+use crate::client::{LobstersClient, LobstersRequest, Vote};
+use crate::execution::Stats;
+use crate::execution::{self, id_to_slug, Sampler, MAX_SLUGGABLE_ID};
 use crate::BASE_OPS_PER_MIN;
-use crossbeam_channel;
+use futures::{future, Future, Stream};
+use hdrhistogram::Histogram;
+use rand::distributions::Distribution;
 use rand::{self, Rng};
-use std::sync::{Arc, Barrier, Mutex};
-use std::{thread, time};
-use tokio_core;
+use std::cell::RefCell;
+use std::sync::{atomic, Arc, Mutex};
+use std::{mem, time};
 
-pub(crate) fn run<C, I>(
+thread_local! {
+    static RMT_STATS: RefCell<Stats> = RefCell::new(Stats::default());
+    static SJRN_STATS: RefCell<Stats> = RefCell::new(Stats::default());
+}
+
+pub(crate) fn run<C>(
     load: execution::Workload,
     in_flight: usize,
-    mut factory: I,
+    mut client: C,
     prime: bool,
-) -> (
-    f64,
-    Vec<thread::JoinHandle<(f64, execution::Stats, execution::Stats)>>,
-    usize,
-)
+) -> (f64, execution::Stats, execution::Stats, usize)
 where
-    I: Send + 'static,
-    C: LobstersClient<Factory = I> + 'static,
+    C: LobstersClient,
 {
+    let target = BASE_OPS_PER_MIN as f64 * load.req_scale / 60.0;
+    /*
     // generating a request takes a while because we have to generate random numbers (including
     // zipfs). so, depending on the target load, we may need more than one load generation
     // thread. we'll make them all share the pool of issuers though.
-    let mut target = BASE_OPS_PER_MIN as f64 * load.req_scale / 60.0;
     let generator_capacity = 100_000.0; // req/s == 10 µs to generate a request
     let ngen = (target / generator_capacity).ceil() as usize;
     target /= ngen as f64;
 
     let nthreads = load.threads;
+    */
     let warmup = load.warmup;
     let runtime = load.runtime;
 
     if prime {
-        C::setup(&mut factory);
+        if let Err(e) = client.setup() {
+            panic!("client setup failed: {:?}", e);
+        }
     }
 
-    let factory = Arc::new(Mutex::new(factory));
-    let (pool, jobs) = crossbeam_channel::unbounded();
-    let workers: Vec<_> = (0..nthreads)
-        .map(|i| {
-            let jobs = jobs.clone();
-            let factory = factory.clone();
-            thread::Builder::new()
-                .name(format!("issuer-{}", i))
-                .spawn(move || {
-                    let core = tokio_core::reactor::Core::new().unwrap();
-                    let c = C::spawn(&mut *factory.lock().unwrap(), &core.handle());
-
-                    execution::issuer::run(warmup, runtime, in_flight, core, c, jobs)
-                    // NOTE: there may still be a bunch of requests in the queue here,
-                    // but core.run() will return when the stream is closed.
-                })
-                .unwrap()
-        })
-        .collect();
-
-    let barrier = Arc::new(Barrier::new(nthreads + 1));
-    let now = time::Instant::now();
+    let rmt_stats: Arc<Mutex<Stats>> = Arc::default();
+    let sjrn_stats: Arc<Mutex<Stats>> = Arc::default();
+    let mut rt = {
+        let rmt_stats = rmt_stats.clone();
+        let sjrn_stats = sjrn_stats.clone();
+        tokio::runtime::Builder::new()
+            .before_stop(move || {
+                let _ = RMT_STATS.with(|my_stats| {
+                    let mut stats = rmt_stats.lock().unwrap();
+                    for (rtype, my_h) in my_stats.borrow_mut().drain() {
+                        use std::collections::hash_map::Entry;
+                        match stats.entry(rtype) {
+                            Entry::Vacant(v) => {
+                                v.insert(my_h);
+                            }
+                            Entry::Occupied(mut h) => h.get_mut().add(&my_h).unwrap(),
+                        }
+                    }
+                });
+                let _ = SJRN_STATS.with(|my_stats| {
+                    let mut stats = sjrn_stats.lock().unwrap();
+                    for (rtype, my_h) in my_stats.borrow_mut().drain() {
+                        use std::collections::hash_map::Entry;
+                        match stats.entry(rtype) {
+                            Entry::Vacant(v) => {
+                                v.insert(my_h);
+                            }
+                            Entry::Occupied(mut h) => h.get_mut().add(&my_h).unwrap(),
+                        }
+                    }
+                });
+            })
+            .build()
+            .unwrap()
+    };
+    let start = time::Instant::now();
 
     // compute how many of each thing there will be in the database after scaling by mem_scale
     let sampler = Sampler::new(load.mem_scale);
     let nstories = sampler.nstories();
 
     // then, log in all the users
-    for u in 0..sampler.nusers() {
-        pool.send(WorkerCommand::Request(now, Some(u), LobstersRequest::Login))
-            .unwrap();
-    }
+    rt.block_on(
+        futures::stream::futures_unordered(
+            (0..sampler.nusers()).map(|u| client.handle(Some(u), LobstersRequest::Login)),
+        )
+        .fold(0, |_, _| Ok(0)),
+    )
+    .expect("tokio runtime failed");
 
     if prime {
         println!("--> priming database");
         let mut rng = rand::thread_rng();
 
-        // wait for all threads to be ready
-        // we don't normally know which worker thread will receive any given command (it's mpmc
-        // after all), but since a ::Wait causes the receiving thread to *block*, we know that once
-        // it receives one, it can't receive another until the barrier has been passed! Therefore,
-        // sending `nthreads` barriers should ensure that every thread gets one
-        for _ in 0..nthreads {
-            pool.send(WorkerCommand::Wait(barrier.clone())).unwrap();
-        }
-        barrier.wait();
-
         // first, we need to prime the database stories!
+        let mut futs = futures::stream::futures_unordered::FuturesUnordered::new();
         for id in 0..nstories {
             // NOTE: we're assuming that users who vote much also submit many stories
             let req = LobstersRequest::Submit {
                 id: id_to_slug(id),
                 title: format!("Base article {}", id),
             };
-            pool.send(WorkerCommand::Request(
-                now,
-                Some(sampler.user(&mut rng)),
-                req,
-            ))
-            .unwrap();
+            futs.push(client.handle(Some(sampler.user(&mut rng)), req));
         }
 
         // and as many comments
@@ -106,10 +115,12 @@ where
 
             // synchronize occasionally to ensure that we can safely generate parent comments
             if story == 0 {
-                for _ in 0..nthreads {
-                    pool.send(WorkerCommand::Wait(barrier.clone())).unwrap();
-                }
-                barrier.wait();
+                let futs = std::mem::replace(
+                    &mut futs,
+                    futures::stream::futures_unordered::FuturesUnordered::new(),
+                );
+                rt.block_on(futs.fold(0, |_, _| Ok(0)))
+                    .expect("tokio runtime failed");
             }
 
             let parent = if rng.gen_bool(0.5) {
@@ -135,47 +146,184 @@ where
             };
 
             // NOTE: we're assuming that users who vote much also submit many stories
-            pool.send(WorkerCommand::Request(
-                now,
-                Some(sampler.user(&mut rng)),
-                req,
-            ))
-            .unwrap();
+            futs.push(client.handle(Some(sampler.user(&mut rng)), req));
         }
 
         // wait for all threads to finish priming comments
         // the addition of the ::Wait barrier will also ensure that start is (re)set
-        for _ in 0..nthreads {
-            pool.send(WorkerCommand::Wait(barrier.clone())).unwrap();
+        rt.block_on(futs.fold(0, |_, _| Ok(0)))
+            .expect("tokio runtime failed");
+        println!("--> finished priming database in {:?}", start.elapsed());
+    }
+
+    let start = time::Instant::now();
+    let count_from = start + warmup;
+    let end = start + warmup + runtime;
+
+    let nstories = sampler.nstories();
+    let ncomments = sampler.ncomments();
+
+    let mut ops = 0;
+    let mut _nissued = 0;
+    let npending = &*Box::leak(Box::new(atomic::AtomicUsize::new(0)));
+    let mut rng = rand::thread_rng();
+    let interarrival_ns = rand::distributions::Exp::new(target * 1e-9);
+
+    let mut next = time::Instant::now();
+    while next < end {
+        let now = time::Instant::now();
+
+        // TODO: early exit at some point?
+
+        if next > now || npending.load(atomic::Ordering::Acquire) > in_flight {
+            atomic::spin_loop_hint();
+            continue;
         }
-        barrier.wait();
-        println!("--> finished priming database");
+
+        // randomly pick next request type based on relative frequency
+        let mut seed: isize = rng.gen_range(0, 100000);
+        let seed = &mut seed;
+        let mut pick = |f| {
+            let applies = *seed <= f;
+            *seed -= f;
+            applies
+        };
+
+        // XXX: we're assuming that basically all page views happen as a user, and that the users
+        // who are most active voters are also the ones that interact most with the site.
+        // XXX: we're assuming that users who vote a lot also comment a lot
+        // XXX: we're assuming that users who vote a lot also submit many stories
+        let user = Some(sampler.user(&mut rng));
+        let req = if pick(55842) {
+            // XXX: we're assuming here that stories with more votes are viewed more
+            LobstersRequest::Story(id_to_slug(sampler.story_for_vote(&mut rng)))
+        } else if pick(30105) {
+            LobstersRequest::Frontpage
+        } else if pick(6702) {
+            // XXX: we're assuming that users who vote a lot are also "popular"
+            LobstersRequest::User(sampler.user(&mut rng))
+        } else if pick(4674) {
+            LobstersRequest::Comments
+        } else if pick(967) {
+            LobstersRequest::Recent
+        } else if pick(630) {
+            LobstersRequest::CommentVote(id_to_slug(sampler.comment_for_vote(&mut rng)), Vote::Up)
+        } else if pick(475) {
+            LobstersRequest::StoryVote(id_to_slug(sampler.story_for_vote(&mut rng)), Vote::Up)
+        } else if pick(316) {
+            // comments without a parent
+            LobstersRequest::Comment {
+                id: id_to_slug(rng.gen_range(ncomments, MAX_SLUGGABLE_ID)),
+                story: id_to_slug(sampler.story_for_comment(&mut rng)),
+                parent: None,
+            }
+        } else if pick(87) {
+            LobstersRequest::Login
+        } else if pick(71) {
+            // comments with a parent
+            let id = rng.gen_range(ncomments, MAX_SLUGGABLE_ID);
+            let story = sampler.story_for_comment(&mut rng);
+            // we need to pick a comment that's on the chosen story
+            // we know that every nth comment from prepopulation is to the same story
+            let comments_per_story = ncomments / nstories;
+            let parent = story + nstories * rng.gen_range(0, comments_per_story);
+            LobstersRequest::Comment {
+                id: id_to_slug(id),
+                story: id_to_slug(story),
+                parent: Some(id_to_slug(parent)),
+            }
+        } else if pick(54) {
+            LobstersRequest::CommentVote(id_to_slug(sampler.comment_for_vote(&mut rng)), Vote::Down)
+        } else if pick(53) {
+            let id = rng.gen_range(nstories, MAX_SLUGGABLE_ID);
+            LobstersRequest::Submit {
+                id: id_to_slug(id),
+                title: format!("benchmark {}", id),
+            }
+        } else if pick(21) {
+            LobstersRequest::StoryVote(id_to_slug(sampler.story_for_vote(&mut rng)), Vote::Down)
+        } else {
+            // ~.003%
+            LobstersRequest::Logout
+        };
+
+        _nissued += 1;
+        if now > count_from {
+            ops += 1;
+        }
+
+        let issued = next;
+        let rtype = mem::discriminant(&req);
+        let fut = client.handle(user, req);
+        npending.fetch_add(1, atomic::Ordering::AcqRel);
+        tokio::spawn(future::lazy(move || {
+            let _ = issued.elapsed();
+            let start = time::Instant::now();
+            fut.then(move |r| {
+                let rmt_time = start.elapsed();
+                let sjrn_time = issued.elapsed();
+                npending.fetch_sub(1, atomic::Ordering::AcqRel);
+                match r {
+                    Ok(_) => {
+                        if now <= count_from {
+                            // in warmup -- do nothing
+                            return Ok(());
+                        }
+                        RMT_STATS.with(|stats| {
+                            stats
+                                .borrow_mut()
+                                .entry(rtype)
+                                .or_insert_with(|| {
+                                    Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
+                                })
+                                .saturating_record(
+                                    rmt_time.as_secs() * 1_000
+                                        + rmt_time.subsec_nanos() as u64 / 1_000_000,
+                                );
+                        });
+                        SJRN_STATS.with(|stats| {
+                            stats
+                                .borrow_mut()
+                                .entry(rtype)
+                                .or_insert_with(|| {
+                                    Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
+                                })
+                                .saturating_record(
+                                    sjrn_time.as_secs() * 1_000
+                                        + sjrn_time.subsec_nanos() as u64 / 1_000_000,
+                                );
+                        });
+                        Ok(())
+                    }
+                    Err(e) => unimplemented!("got error from future: {:?}", e),
+                }
+            })
+        }));
+
+        // schedule next delivery
+        next += time::Duration::new(0, interarrival_ns.sample(&mut rng) as u32);
     }
 
-    // wait for all threads to be ready (and set their start time correctly)
-    for _ in 0..nthreads {
-        pool.send(WorkerCommand::Start(barrier.clone())).unwrap();
+    rt.shutdown_on_idle().wait().unwrap();
+    assert_eq!(npending.load(atomic::Ordering::Acquire), 0);
+
+    let mut per_second = 0.0;
+    let now = time::Instant::now();
+    if now > count_from {
+        let took = now.duration_since(count_from);
+        if took != time::Duration::new(0, 0) {
+            per_second =
+                ops as f64 / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
+        }
     }
-    barrier.wait();
 
-    let generators: Vec<_> = (0..ngen)
-        .map(|geni| {
-            let pool = pool.clone();
-            let load = load.clone();
-            let sampler = sampler.clone();
-
-            thread::Builder::new()
-                .name(format!("load-gen{}", geni))
-                .spawn(move || execution::generator::run::<C>(load, sampler, pool, target))
-                .unwrap()
-        })
-        .collect();
-
-    drop(pool);
-    let gps = generators.into_iter().map(|gen| gen.join().unwrap()).sum();
-
-    // how many operations were left in the queue at the end?
-    let dropped = jobs.iter().count();
-
-    (gps, workers, dropped)
+    // gather stats
+    let mut rmt_stats = rmt_stats.lock().unwrap();
+    let mut sjrn_stats = sjrn_stats.lock().unwrap();
+    (
+        per_second,
+        std::mem::replace(&mut *rmt_stats, Default::default()),
+        std::mem::replace(&mut *sjrn_stats, Default::default()),
+        0,
+    )
 }
