@@ -10,6 +10,10 @@ pub trait LobstersClient {
     /// If any errors are produced, they are generally printed rather than returned.
     type Error: std::error::Error + Send + 'static;
 
+    /// A future that will resolve once setup has finished.
+    // NOTE: these should be IntoFuture, but then we can't give the Send bound
+    type SetupFuture: futures::Future<Item = (), Error = Self::Error> + Send + 'static;
+
     /// A future that will resolve once a request has finished processing.
     type RequestFuture: futures::Future<Item = (), Error = Self::Error> + Send + 'static;
 
@@ -27,11 +31,7 @@ pub trait LobstersClient {
     ///
     /// The default implementation of this method just prints an informational message saying that
     /// the backend was not re-created.
-    fn setup(&mut self) -> Result<(), Self::Error> {
-        eprintln!("note: did not re-create backend as lobsters client did not implement setup()");
-        eprintln!("note: if priming fails, make sure you have run the lobsters setup scripts");
-        Ok(())
-    }
+    fn setup(&mut self) -> Self::SetupFuture;
 
     /// Handle the given lobste.rs request, made on behalf of the given user,
     /// returning a future that resolves when the request has been satisfied.

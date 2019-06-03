@@ -38,12 +38,6 @@ where
     let warmup = load.warmup;
     let runtime = load.runtime;
 
-    if prime {
-        if let Err(e) = client.setup() {
-            panic!("client setup failed: {:?}", e);
-        }
-    }
-
     let rmt_stats: Arc<Mutex<Stats>> = Arc::default();
     let sjrn_stats: Arc<Mutex<Stats>> = Arc::default();
     let mut rt = {
@@ -79,6 +73,13 @@ where
             .build()
             .unwrap()
     };
+
+    if prime {
+        if let Err(e) = rt.block_on(client.setup()) {
+            panic!("client setup failed: {:?}", e);
+        }
+    }
+
     let start = time::Instant::now();
 
     // compute how many of each thing there will be in the database after scaling by mem_scale

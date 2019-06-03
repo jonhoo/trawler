@@ -4,7 +4,7 @@ extern crate clap;
 extern crate lazy_static;
 
 use clap::{App, Arg};
-use futures::{future, Future};
+use futures::{future, Future, IntoFuture};
 use headers::HeaderMapExt;
 use trawler::{LobstersRequest, Vote};
 
@@ -80,6 +80,13 @@ impl WebClient {
 impl trawler::LobstersClient for WebClient {
     type Error = hyper::Error;
     type RequestFuture = Box<futures::Future<Item = (), Error = Self::Error> + Send>;
+    type SetupFuture = futures::future::FutureResult<(), Self::Error>;
+
+    fn setup(&mut self) -> Self::SetupFuture {
+        eprintln!("note: did not re-create backend as lobsters client did not implement setup()");
+        eprintln!("note: if priming fails, make sure you have run the lobsters setup scripts");
+        Ok(()).into_future()
+    }
 
     fn handle(
         &mut self,
