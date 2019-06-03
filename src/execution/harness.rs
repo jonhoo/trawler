@@ -78,6 +78,10 @@ where
         if let Err(e) = rt.block_on(client.setup()) {
             panic!("client setup failed: {:?}", e);
         }
+    } else {
+        // check that implementation is sane and error early if it's not
+        rt.block_on(client.handle(None, LobstersRequest::Frontpage))
+            .expect("given client cannot handle frontpage request");
     }
 
     let start = time::Instant::now();
