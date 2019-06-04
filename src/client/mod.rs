@@ -8,7 +8,7 @@ pub trait LobstersClient {
     /// Errors produced by the client.
     ///
     /// If any errors are produced, they are generally printed rather than returned.
-    type Error: std::error::Error + Send + 'static;
+    type Error: std::fmt::Debug + Send + 'static;
 
     /// A future that will resolve once setup has finished.
     // NOTE: these should be IntoFuture, but then we can't give the Send bound
