@@ -261,7 +261,7 @@ where
         let rtype = mem::discriminant(&req);
         let fut = client.handle(user, req);
         npending.fetch_add(1, atomic::Ordering::AcqRel);
-        tokio::spawn(future::lazy(move || {
+        rt.spawn(future::lazy(move || {
             let _ = issued.elapsed();
             let start = time::Instant::now();
             fut.then(move |r| {
