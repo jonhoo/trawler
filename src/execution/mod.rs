@@ -55,7 +55,10 @@ impl Sampler {
     }
 
     fn nstories(&self) -> u32 {
-        self.votes_per_story.nvalues() as u32
+        std::cmp::max(
+            self.votes_per_story.nvalues(),
+            self.comments_per_story.nvalues(),
+        ) as u32
     }
 
     fn story_for_comment<R: rand::Rng>(&self, rng: &mut R) -> u32 {
