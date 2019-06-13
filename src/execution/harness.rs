@@ -162,8 +162,8 @@ where
     }
 
     let start = time::Instant::now();
-    let count_from = start + warmup;
-    let end = start + warmup + runtime;
+    let mut count_from = start + warmup;
+    let mut end = start + warmup + runtime;
 
     let nstories = sampler.nstories();
     let ncomments = sampler.ncomments();
@@ -174,15 +174,33 @@ where
     let mut rng = rand::thread_rng();
     let interarrival_ns = rand::distributions::Exp::new(target * 1e-9);
 
+    let mut waited_after_warmup = false;
     let mut next = time::Instant::now();
     while next < end {
-        let now = time::Instant::now();
+        let mut now = time::Instant::now();
 
         // TODO: early exit at some point?
 
         if next > now || npending.load(atomic::Ordering::Acquire) > in_flight {
             atomic::spin_loop_hint();
             continue;
+        }
+        if !waited_after_warmup && next > count_from {
+            // we want to make sure we don't "pollute" the main run with time spent in warmup.
+            // for example,if warmup has built up a queue, we want that queue to drain before we
+            // start to measure runtime.
+            println!("--> warmup finished; flushing queues @ {:?}", now);
+            while npending.load(atomic::Ordering::Acquire) != 0 {
+                std::thread::yield_now();
+            }
+            let waited = now.elapsed();
+            count_from += waited;
+            end += waited;
+
+            waited_after_warmup = true;
+            now = time::Instant::now();
+            next = now;
+            println!("--> queues flushed after warmup in {:?}", waited);
         }
 
         // randomly pick next request type based on relative frequency
