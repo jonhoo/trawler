@@ -52,6 +52,7 @@ impl<'a> Default for WorkloadBuilder<'a> {
             load: execution::Workload {
                 mem_scale: 1.0,
                 req_scale: 1.0,
+                warmup_scale: None,
 
                 threads: 1,
 
@@ -75,6 +76,16 @@ impl<'a> WorkloadBuilder<'a> {
     pub fn scale(&mut self, mem_factor: f64, req_factor: f64) -> &mut Self {
         self.load.mem_scale = mem_factor;
         self.load.req_scale = req_factor;
+        self
+    }
+
+    /// Set the request scale factor used for the warmup part of the workload.
+    ///
+    /// Defaults to the request scale factor set by [`scale`].
+    ///
+    /// See [`scale`] for details.
+    pub fn warmup_scale(&mut self, req_factor: f64) -> &mut Self {
+        self.load.warmup_scale = Some(req_factor);
         self
     }
 
