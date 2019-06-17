@@ -55,7 +55,10 @@ impl Sampler {
     }
 
     fn nstories(&self) -> u32 {
-        self.votes_per_story.nvalues() as u32
+        std::cmp::max(
+            self.votes_per_story.nvalues(),
+            self.comments_per_story.nvalues(),
+        ) as u32
     }
 
     fn story_for_comment<R: rand::Rng>(&self, rng: &mut R) -> u32 {
@@ -101,11 +104,10 @@ fn id_to_slug(mut id: u32) -> [u8; 6] {
 pub(crate) struct Workload {
     pub(crate) mem_scale: f64,
     pub(crate) req_scale: f64,
+    pub(crate) warmup_scale: Option<f64>,
     pub(crate) threads: usize,
     pub(crate) warmup: time::Duration,
     pub(crate) runtime: time::Duration,
 }
 
-pub(crate) mod generator;
 pub(crate) mod harness;
-pub(crate) mod issuer;

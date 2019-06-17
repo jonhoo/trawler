@@ -31,7 +31,6 @@ mod execution;
 use hdrhistogram::Histogram;
 use std::collections::HashMap;
 use std::fs;
-use std::sync::{Arc, Barrier};
 use std::time;
 
 include!(concat!(env!("OUT_DIR"), "/statistics.rs"));
@@ -39,13 +38,6 @@ include!(concat!(env!("OUT_DIR"), "/statistics.rs"));
 /// There were 2893183 relevant requests in the 63166 minutes between 2018-02-11 04:40:31 and
 /// 2018-03-27 01:26:49 according to https://lobste.rs/s/cqnzl5/#c_jz5hqv.
 pub const BASE_OPS_PER_MIN: usize = 46;
-
-#[derive(Debug, Clone)]
-enum WorkerCommand {
-    Request(time::Instant, Option<UserId>, LobstersRequest),
-    Start(Arc<Barrier>),
-    Wait(Arc<Barrier>),
-}
 
 /// Set the parameters for a new Lobsters-like workload.
 pub struct WorkloadBuilder<'a> {
@@ -60,6 +52,7 @@ impl<'a> Default for WorkloadBuilder<'a> {
             load: execution::Workload {
                 mem_scale: 1.0,
                 req_scale: 1.0,
+                warmup_scale: None,
 
                 threads: 1,
 
@@ -83,6 +76,16 @@ impl<'a> WorkloadBuilder<'a> {
     pub fn scale(&mut self, mem_factor: f64, req_factor: f64) -> &mut Self {
         self.load.mem_scale = mem_factor;
         self.load.req_scale = req_factor;
+        self
+    }
+
+    /// Set the request scale factor used for the warmup part of the workload.
+    ///
+    /// Defaults to the request scale factor set by [`scale`].
+    ///
+    /// See [`scale`] for details.
+    pub fn warmup_scale(&mut self, req_factor: f64) -> &mut Self {
+        self.load.warmup_scale = Some(req_factor);
         self
     }
 
@@ -127,10 +130,9 @@ impl<'a> WorkloadBuilder<'a> {
     /// there is no need to prime again unless the backend is emptied or the memory scale factor is
     /// changed. Note that priming does not delete the database, nor detect the current scale, so
     /// always empty the backend before calling `run` with `prime` set.
-    pub fn run<C, I>(&self, factory: I, prime: bool)
+    pub fn run<C>(&self, client: C, prime: bool)
     where
-        I: Send + 'static,
-        C: LobstersClient<Factory = I> + 'static,
+        C: LobstersClient + 'static,
     {
         let hists: (HashMap<_, _>, HashMap<_, _>) =
             if let Some(mut f) = self.histogram_file.and_then(|h| fs::File::open(h).ok()) {
@@ -165,27 +167,23 @@ impl<'a> WorkloadBuilder<'a> {
         let (mut sjrn_t, mut rmt_t) = hists;
 
         // actually run the workload
-        let (generated_per_sec, workers, dropped) =
-            execution::harness::run::<C, _>(self.load.clone(), self.max_in_flight, factory, prime);
+        let (generated_per_sec, rmt, sjrn, dropped) =
+            execution::harness::run(self.load.clone(), self.max_in_flight, client, prime);
 
-        let mut issued_per_sec = 0.0;
-        for w in workers {
-            let (ips, sjrn, rmt) = w.join().unwrap();
-            issued_per_sec += ips;
-            for (variant, h) in sjrn {
-                sjrn_t
-                    .get_mut(&variant)
-                    .expect("missing entry for variant")
-                    .add(h)
-                    .unwrap();
-            }
-            for (variant, h) in rmt {
-                rmt_t
-                    .get_mut(&variant)
-                    .expect("missing entry for variant")
-                    .add(h)
-                    .unwrap();
-            }
+        // incorporate results
+        for (variant, h) in sjrn {
+            sjrn_t
+                .get_mut(&variant)
+                .expect("missing entry for variant")
+                .add(h)
+                .unwrap();
+        }
+        for (variant, h) in rmt {
+            rmt_t
+                .get_mut(&variant)
+                .expect("missing entry for variant")
+                .add(h)
+                .unwrap();
         }
 
         // all done!
@@ -194,7 +192,6 @@ impl<'a> WorkloadBuilder<'a> {
             BASE_OPS_PER_MIN as f64 * self.load.req_scale / 60.0,
         );
         println!("# generated ops/s: {:.2}", generated_per_sec);
-        println!("# achieved ops/s: {:.2}", issued_per_sec);
         println!("# dropped requests: {}", dropped);
 
         if let Some(h) = self.histogram_file {
