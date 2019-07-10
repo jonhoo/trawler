@@ -174,7 +174,7 @@ where
     let mut _nissued = 0;
     let npending = &*Box::leak(Box::new(atomic::AtomicUsize::new(0)));
     let mut rng = rand::thread_rng();
-    let mut interarrival_ns = rand::distributions::Exp::new(warmup_target * 1e-9);
+    let mut interarrival_ns = rand_distr::Exp::new(warmup_target * 1e-9).unwrap();
 
     let mut waited_after_warmup = false;
     let mut next = time::Instant::now();
@@ -192,7 +192,7 @@ where
             // for example,if warmup has built up a queue, we want that queue to drain before we
             // start to measure runtime.
             println!("--> warmup finished; flushing queues @ {:?}", now);
-            interarrival_ns = rand::distributions::Exp::new(target * 1e-9);
+            interarrival_ns = rand_distr::Exp::new(target * 1e-9).unwrap();
             while npending.load(atomic::Ordering::Acquire) != 0 {
                 std::thread::yield_now();
             }
