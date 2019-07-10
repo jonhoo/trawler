@@ -330,6 +330,7 @@ where
         next += time::Duration::new(0, interarrival_ns.sample(&mut rng) as u32);
     }
 
+    drop(client);
     rt.shutdown_on_idle().wait().unwrap();
     assert_eq!(npending.load(atomic::Ordering::Acquire), 0);
 
