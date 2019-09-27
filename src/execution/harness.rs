@@ -2,11 +2,13 @@ use crate::client::{LobstersClient, LobstersRequest, Vote};
 use crate::execution::Stats;
 use crate::execution::{self, id_to_slug, Sampler, MAX_SLUGGABLE_ID};
 use crate::BASE_OPS_PER_MIN;
-use futures::{future, Future, Stream};
+use futures_util::stream::futures_unordered::FuturesUnordered;
+use futures_util::stream::StreamExt;
 use hdrhistogram::Histogram;
 use rand::distributions::Distribution;
 use rand::{self, Rng};
 use std::cell::RefCell;
+use std::iter::FromIterator;
 use std::sync::{atomic, Arc, Mutex};
 use std::{mem, time};
 
@@ -42,7 +44,7 @@ where
 
     let rmt_stats: Arc<Mutex<Stats>> = Arc::default();
     let sjrn_stats: Arc<Mutex<Stats>> = Arc::default();
-    let mut rt = {
+    let rt = {
         let rmt_stats = rmt_stats.clone();
         let sjrn_stats = sjrn_stats.clone();
         tokio::runtime::Builder::new()
@@ -93,20 +95,21 @@ where
     let nstories = sampler.nstories();
 
     // then, log in all the users
-    rt.block_on(
-        futures::stream::futures_unordered(
-            (0..sampler.nusers()).map(|u| client.handle(Some(u), LobstersRequest::Login)),
-        )
-        .fold(0, |_, _| Ok(0)),
-    )
-    .expect("tokio runtime failed");
+    let mut all = FuturesUnordered::from_iter(
+        (0..sampler.nusers()).map(|u| client.handle(Some(u), LobstersRequest::Login)),
+    );
+    rt.block_on(async move {
+        while let Some(r) = all.next().await {
+            r.unwrap();
+        }
+    });
 
     if prime {
         println!("--> priming database");
         let mut rng = rand::thread_rng();
 
         // first, we need to prime the database stories!
-        let mut futs = futures::stream::futures_unordered::FuturesUnordered::new();
+        let mut futs = FuturesUnordered::new();
         for id in 0..nstories {
             // NOTE: we're assuming that users who vote much also submit many stories
             let req = LobstersRequest::Submit {
@@ -122,12 +125,12 @@ where
 
             // synchronize occasionally to ensure that we can safely generate parent comments
             if story == 0 {
-                let futs = std::mem::replace(
-                    &mut futs,
-                    futures::stream::futures_unordered::FuturesUnordered::new(),
-                );
-                rt.block_on(futs.fold(0, |_, _| Ok(0)))
-                    .expect("tokio runtime failed");
+                let mut futs = std::mem::replace(&mut futs, FuturesUnordered::new());
+                rt.block_on(async move {
+                    while let Some(r) = futs.next().await {
+                        r.unwrap();
+                    }
+                });
             }
 
             let parent = if rng.gen_bool(0.5) {
@@ -158,8 +161,11 @@ where
 
         // wait for all threads to finish priming comments
         // the addition of the ::Wait barrier will also ensure that start is (re)set
-        rt.block_on(futs.fold(0, |_, _| Ok(0)))
-            .expect("tokio runtime failed");
+        rt.block_on(async move {
+            while let Some(r) = futs.next().await {
+                r.unwrap();
+            }
+        });
         println!("--> finished priming database in {:?}", start.elapsed());
     }
 
@@ -286,56 +292,45 @@ where
         let rtype = mem::discriminant(&req);
         let fut = client.handle(user, req);
         npending.fetch_add(1, atomic::Ordering::AcqRel);
-        rt.spawn(future::lazy(move || {
+        rt.spawn(async move {
             let _ = issued.elapsed();
             let start = time::Instant::now();
-            fut.then(move |r| {
-                let rmt_time = start.elapsed();
-                let sjrn_time = issued.elapsed();
-                npending.fetch_sub(1, atomic::Ordering::AcqRel);
-                match r {
-                    Ok(_) => {
-                        if now <= count_from {
-                            // in warmup -- do nothing
-                            return Ok(());
-                        }
-                        RMT_STATS.with(|stats| {
-                            stats
-                                .borrow_mut()
-                                .entry(rtype)
-                                .or_insert_with(|| {
-                                    Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
-                                })
-                                .saturating_record(
-                                    rmt_time.as_secs() * 1_000
-                                        + rmt_time.subsec_nanos() as u64 / 1_000_000,
-                                );
-                        });
-                        SJRN_STATS.with(|stats| {
-                            stats
-                                .borrow_mut()
-                                .entry(rtype)
-                                .or_insert_with(|| {
-                                    Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap()
-                                })
-                                .saturating_record(
-                                    sjrn_time.as_secs() * 1_000
-                                        + sjrn_time.subsec_nanos() as u64 / 1_000_000,
-                                );
-                        });
-                        Ok(())
-                    }
-                    Err(e) => unimplemented!("got error from future: {:?}", e),
-                }
-            })
-        }));
+            let r = fut.await;
+            let rmt_time = start.elapsed();
+            let sjrn_time = issued.elapsed();
+            npending.fetch_sub(1, atomic::Ordering::AcqRel);
+
+            r.unwrap();
+            if now <= count_from {
+                // in warmup -- do nothing
+                return;
+            }
+            RMT_STATS.with(|stats| {
+                stats
+                    .borrow_mut()
+                    .entry(rtype)
+                    .or_insert_with(|| Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap())
+                    .saturating_record(
+                        rmt_time.as_secs() * 1_000 + rmt_time.subsec_nanos() as u64 / 1_000_000,
+                    );
+            });
+            SJRN_STATS.with(|stats| {
+                stats
+                    .borrow_mut()
+                    .entry(rtype)
+                    .or_insert_with(|| Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap())
+                    .saturating_record(
+                        sjrn_time.as_secs() * 1_000 + sjrn_time.subsec_nanos() as u64 / 1_000_000,
+                    );
+            });
+        });
 
         // schedule next delivery
         next += time::Duration::new(0, interarrival_ns.sample(&mut rng) as u32);
     }
 
     drop(client);
-    rt.shutdown_on_idle().wait().unwrap();
+    rt.shutdown_on_idle();
     assert_eq!(npending.load(atomic::Ordering::Acquire), 0);
 
     let mut per_second = 0.0;

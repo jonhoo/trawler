@@ -1,3 +1,5 @@
+use std::future::Future;
+
 /// Implementors of this trait handle [`LobstersRequest`] that correspond to "real" lobste.rs
 /// website requests queued up by the workload generator.
 ///
@@ -12,10 +14,10 @@ pub trait LobstersClient {
 
     /// A future that will resolve once setup has finished.
     // NOTE: these should be IntoFuture, but then we can't give the Send bound
-    type SetupFuture: futures::Future<Item = (), Error = Self::Error> + Send + 'static;
+    type SetupFuture: Future<Output = Result<(), Self::Error>> + Send + 'static;
 
     /// A future that will resolve once a request has finished processing.
-    type RequestFuture: futures::Future<Item = (), Error = Self::Error> + Send + 'static;
+    type RequestFuture: Future<Output = Result<(), Self::Error>> + Send + 'static;
 
     /// Set up a fresh instance of the backend before priming.
     ///

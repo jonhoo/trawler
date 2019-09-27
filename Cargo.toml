@@ -1,6 +1,6 @@
 [package]
 name = "trawler"
-version = "0.6.3"
+version = "0.7.0-alpha.1"
 edition = "2018"
 
 description = "A workload generator that emulates the traffic to lobste.rs"
@@ -39,11 +39,12 @@ hdrhistogram = "6.0.0"
 histogram-sampler = "0.4"
 
 crossbeam-channel = "0.3"
-tokio = "0.1"
-futures = "0.1"
+tokio = "0.2.0-alpha.5"
+futures-core-preview = "0.3.0-alpha.18"
+futures-util-preview = "0.3.0-alpha.18"
 
 clap = { version = "2.25.0", optional = true }
-hyper = { version = "0.12", optional = true }
+hyper = { version = "0.13.0-alpha.2", features = [ "unstable-stream" ], optional = true }
 cookie = { version = "0.12", optional = true }
 headers = { version = "0.2", optional = true }
 url = { version = "1.7", optional = true }

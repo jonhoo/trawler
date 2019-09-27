@@ -1,14 +1,15 @@
-#[macro_use]
-extern crate clap;
-#[macro_use]
-extern crate lazy_static;
-
+use clap::value_t_or_exit;
 use clap::{App, Arg};
-use futures::{future, Future, IntoFuture};
+use futures_util::future::{self, Either};
+use futures_util::try_future::TryFutureExt;
+use futures_util::try_stream::TryStreamExt;
 use headers::HeaderMapExt;
+use lazy_static::lazy_static;
 use trawler::{LobstersRequest, Vote};
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::RwLock;
 use std::time;
@@ -32,11 +33,12 @@ impl WebClient {
     fn get_cookie_for(
         &self,
         uid: u32,
-    ) -> Box<futures::Future<Item = cookie::CookieJar, Error = hyper::Error> + Send + 'static> {
+    ) -> Pin<Box<dyn Future<Output = Result<cookie::CookieJar, hyper::Error>> + Send + 'static>>
+    {
         {
             let cookies = SESSION_COOKIES.read().unwrap();
             if let Some(cookie) = cookies.get(&uid) {
-                return Box::new(futures::finished(cookie.clone()));
+                return Box::pin(future::ready(Ok(cookie.clone())));
             }
         }
 
@@ -54,10 +56,9 @@ impl WebClient {
             .typed_insert(headers::ContentType::form_url_encoded());
         let req = req.body(s.finish().into()).unwrap();
 
-        Box::new(self.client.request(req).and_then(move |res| {
+        Box::pin(self.client.request(req).and_then(move |res| {
             if res.status() != hyper::StatusCode::FOUND {
-                use futures::Stream;
-                futures::future::Either::A(res.into_body().concat2().map(move |body| {
+                Either::Left(res.into_body().try_concat().map_ok(move |body| {
                     panic!(
                         "Failed to log in as user{}/test. Make sure to apply the patches!\n{}",
                         uid,
@@ -72,20 +73,20 @@ impl WebClient {
                 }
 
                 SESSION_COOKIES.write().unwrap().insert(uid, cookie.clone());
-                futures::future::Either::B(futures::finished(cookie))
+                Either::Right(future::ready(Ok(cookie)))
             }
         }))
     }
 }
 impl trawler::LobstersClient for WebClient {
     type Error = hyper::Error;
-    type RequestFuture = Box<futures::Future<Item = (), Error = Self::Error> + Send>;
-    type SetupFuture = futures::future::FutureResult<(), Self::Error>;
+    type RequestFuture = Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>;
+    type SetupFuture = future::Ready<Result<(), Self::Error>>;
 
     fn setup(&mut self) -> Self::SetupFuture {
         eprintln!("note: did not re-create backend as lobsters client did not implement setup()");
         eprintln!("note: if priming fails, make sure you have run the lobsters setup scripts");
-        Ok(()).into_future()
+        future::ready(Ok(()))
     }
 
     fn handle(
@@ -120,7 +121,7 @@ impl trawler::LobstersClient for WebClient {
                 hyper::Request::get(url).body(hyper::Body::empty()).unwrap()
             }
             LobstersRequest::Login => {
-                return Box::new(self.get_cookie_for(uid.unwrap()).map(|_| ()));
+                return Box::pin(self.get_cookie_for(uid.unwrap()).map_ok(|_| ()));
             }
             LobstersRequest::Logout => {
                 /*
@@ -128,7 +129,7 @@ impl trawler::LobstersClient for WebClient {
                     hyper::Uri::from_str(self.prefix.join("logout").unwrap().as_ref()).unwrap();
                 hyper::Request::new(hyper::Method::Post, url)
                 */
-                return Box::new(future::ok(()));
+                return Box::pin(future::ready(Ok(())));
             }
             LobstersRequest::Story(id) => {
                 let url = hyper::Uri::from_str(
@@ -221,7 +222,7 @@ impl trawler::LobstersClient for WebClient {
         };
 
         let req = if let Some(uid) = uid {
-            futures::future::Either::A(WebClient::get_cookie_for(self, uid).map(move |cookies| {
+            Either::Left(WebClient::get_cookie_for(self, uid).map_ok(move |cookies| {
                 for c in cookies.iter() {
                     req.headers_mut().insert(
                         hyper::header::COOKIE,
@@ -231,17 +232,15 @@ impl trawler::LobstersClient for WebClient {
                 req
             }))
         } else {
-            futures::future::Either::B(futures::finished(req))
+            Either::Right(future::ready(Ok(req)))
         };
 
         let client = self.client.clone();
-        Box::new(req.and_then(move |req| {
+        Box::pin(req.and_then(move |req| {
             client.request(req).and_then(move |res| {
                 if res.status() != expected {
-                    use futures::Stream;
-
                     let status = res.status();
-                    futures::future::Either::A(res.into_body().concat2().map(move |body| {
+                    Either::Left(res.into_body().try_concat().map_ok(move |body| {
                         panic!(
                             "{:?} status response. You probably forgot to prime.\n{}",
                             status,
@@ -249,7 +248,7 @@ impl trawler::LobstersClient for WebClient {
                         );
                     }))
                 } else {
-                    futures::future::Either::B(futures::finished(()))
+                    Either::Right(future::ready(Ok(())))
                 }
             })
         }))
