@@ -105,7 +105,6 @@ pub(crate) struct Workload {
     pub(crate) mem_scale: f64,
     pub(crate) req_scale: f64,
     pub(crate) warmup_scale: Option<f64>,
-    pub(crate) threads: usize,
     pub(crate) warmup: time::Duration,
     pub(crate) runtime: time::Duration,
 }

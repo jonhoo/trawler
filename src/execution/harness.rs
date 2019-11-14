@@ -29,16 +29,16 @@ where
     let warmup_target =
         BASE_OPS_PER_MIN as f64 * load.warmup_scale.unwrap_or(load.req_scale) / 60.0;
     let target = BASE_OPS_PER_MIN as f64 * load.req_scale / 60.0;
-    /*
+
     // generating a request takes a while because we have to generate random numbers (including
     // zipfs). so, depending on the target load, we may need more than one load generation
     // thread. we'll make them all share the pool of issuers though.
     let generator_capacity = 100_000.0; // req/s == 10 µs to generate a request
-    let ngen = (target / generator_capacity).ceil() as usize;
-    target /= ngen as f64;
+    assert!(
+        target < generator_capacity,
+        "one generator thread cannot generate that much load"
+    );
 
-    let nthreads = load.threads;
-    */
     let warmup = load.warmup;
     let runtime = load.runtime;
 
@@ -159,8 +159,7 @@ where
             futs.push(client.handle(Some(sampler.user(&mut rng)), req));
         }
 
-        // wait for all threads to finish priming comments
-        // the addition of the ::Wait barrier will also ensure that start is (re)set
+        // wait for all priming comments
         rt.block_on(async move {
             while let Some(r) = futs.next().await {
                 r.unwrap();

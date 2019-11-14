@@ -54,8 +54,6 @@ impl<'a> Default for WorkloadBuilder<'a> {
                 req_scale: 1.0,
                 warmup_scale: None,
 
-                threads: 1,
-
                 warmup: time::Duration::from_secs(10),
                 runtime: time::Duration::from_secs(30),
             },
@@ -86,14 +84,6 @@ impl<'a> WorkloadBuilder<'a> {
     /// See [`scale`] for details.
     pub fn warmup_scale(&mut self, req_factor: f64) -> &mut Self {
         self.load.warmup_scale = Some(req_factor);
-        self
-    }
-
-    /// Set the number of threads used to issue requests to the backend.
-    ///
-    /// Each thread can issue `in_flight` requests simultaneously.
-    pub fn issuers(&mut self, n: usize) -> &mut Self {
-        self.load.threads = n;
         self
     }
 
