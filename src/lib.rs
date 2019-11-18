@@ -5,13 +5,12 @@
 //! Tale*](https://www.usenix.org/legacy/event/nsdi06/tech/full_papers/schroeder/schroeder.pdf) by
 //! having clients potentially issue more than one query per request.
 //!
-//! The benchmarker has two main components: load generators and issuers. Load generators generate
-//! requests according to actual lobste.rs traffic patterns as reported in
-//! [here](https://lobste.rs/s/cqnzl5/), records the request time, and puts the request description
-//! into a queue. Issuers take requests from the queue and issues that request to the backend. When
-//! the backend responds, the issuer logs how long the request took to process, *and* how long the
-//! request took from when it was generated until it was satisfied (this is called the *sojourn
-//! time*).
+//! The benchmarker main component is the "load generator". It generates requests according to
+//! actual lobste.rs traffic patterns as reported in [here](https://lobste.rs/s/cqnzl5/), records
+//! the request time, and sends the request description to an implementor of [`LobstersClient`].
+//! When the resulting future resolves, the generator logs how long the request took to process,
+//! *and* how long the request took from when it was generated until it was satisfied (this is
+//! called the *sojourn time*).
 //!
 //! Trawler is written so that it can *either* be run against an instance of
 //! the [lobsters Rails app](https://github.com/lobsters/lobsters) *or*
