@@ -49,9 +49,7 @@ impl<'a> Default for WorkloadBuilder<'a> {
     fn default() -> Self {
         WorkloadBuilder {
             load: execution::Workload {
-                mem_scale: 1.0,
-                req_scale: 1.0,
-                warmup_scale: None,
+                scale: 1.0,
 
                 warmup: time::Duration::from_secs(10),
                 runtime: time::Duration::from_secs(30),
@@ -63,26 +61,15 @@ impl<'a> Default for WorkloadBuilder<'a> {
 }
 
 impl<'a> WorkloadBuilder<'a> {
-    /// Set the memory and request scale factor for the workload.
+    /// Set the scaling factor for the workload.
     ///
     /// A factor of 1 generates a workload commensurate with what the [real lobste.rs
-    /// sees](https://lobste.rs/s/cqnzl5/). At memory scale 1, the site starts out with ~40k
-    /// stories with a total of ~300k comments spread across 9k users. At request factor 1, the
-    /// generated load is on average 44 requests/minute, with a request distribution set according
-    /// to the one observed on lobste.rs (see `data/` for details).
-    pub fn scale(&mut self, mem_factor: f64, req_factor: f64) -> &mut Self {
-        self.load.mem_scale = mem_factor;
-        self.load.req_scale = req_factor;
-        self
-    }
-
-    /// Set the request scale factor used for the warmup part of the workload.
-    ///
-    /// Defaults to the request scale factor set by [`scale`].
-    ///
-    /// See [`scale`] for details.
-    pub fn warmup_scale(&mut self, req_factor: f64) -> &mut Self {
-        self.load.warmup_scale = Some(req_factor);
+    /// sees](https://lobste.rs/s/cqnzl5/). At scale 1, the site starts out with ~40k stories with
+    /// a total of ~300k comments spread across 9k users. The generated load is on average 44
+    /// requests/minute, with a request distribution set according to the one observed on lobste.rs
+    /// (see `data/` for details).
+    pub fn scale(&mut self, factor: f64) -> &mut Self {
+        self.load.scale = factor;
         self
     }
 
@@ -115,10 +102,10 @@ impl<'a> WorkloadBuilder<'a> {
     /// Run this workload with clients spawned from the given factory.
     ///
     /// If `prime` is true, the database will be seeded with stories and comments according to the
-    /// memory scaling factory before the benchmark starts. If the site has already been primed,
-    /// there is no need to prime again unless the backend is emptied or the memory scale factor is
-    /// changed. Note that priming does not delete the database, nor detect the current scale, so
-    /// always empty the backend before calling `run` with `prime` set.
+    /// scaling factory before the benchmark starts. If the site has already been primed, there is
+    /// no need to prime again unless the backend is emptied or the scaling factor is changed. Note
+    /// that priming does not delete the database, nor detect the current scaling factor, so always
+    /// empty the backend before calling `run` with `prime` set.
     pub fn run<C>(&self, client: C, prime: bool)
     where
         C: LobstersClient + 'static,
@@ -178,7 +165,7 @@ impl<'a> WorkloadBuilder<'a> {
         // all done!
         println!(
             "# target ops/s: {:.2}",
-            BASE_OPS_PER_MIN as f64 * self.load.req_scale / 60.0,
+            BASE_OPS_PER_MIN as f64 * self.load.scale / 60.0,
         );
         println!("# generated ops/s: {:.2}", generated_per_sec);
         println!("# dropped requests: {}", dropped);

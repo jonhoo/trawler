@@ -26,9 +26,7 @@ pub(crate) fn run<C>(
 where
     C: LobstersClient,
 {
-    let warmup_target =
-        BASE_OPS_PER_MIN as f64 * load.warmup_scale.unwrap_or(load.req_scale) / 60.0;
-    let target = BASE_OPS_PER_MIN as f64 * load.req_scale / 60.0;
+    let target = BASE_OPS_PER_MIN as f64 * load.scale / 60.0;
 
     // generating a request takes a while because we have to generate random numbers (including
     // zipfs). so, depending on the target load, we may need more than one load generation
@@ -91,7 +89,7 @@ where
     let start = time::Instant::now();
 
     // compute how many of each thing there will be in the database after scaling by mem_scale
-    let sampler = Sampler::new(load.mem_scale);
+    let sampler = Sampler::new(load.scale);
     let nstories = sampler.nstories();
 
     // then, log in all the users
@@ -183,7 +181,7 @@ where
     let mut _nissued = 0;
     let npending = &*Box::leak(Box::new(atomic::AtomicUsize::new(0)));
     let mut rng = rand::thread_rng();
-    let mut interarrival_ns = rand_distr::Exp::new(warmup_target * 1e-9).unwrap();
+    let interarrival_ns = rand_distr::Exp::new(target * 1e-9).unwrap();
 
     let mut waited_after_warmup = false;
     let mut next = time::Instant::now();
@@ -201,7 +199,6 @@ where
             // for example,if warmup has built up a queue, we want that queue to drain before we
             // start to measure runtime.
             println!("--> warmup finished; flushing queues @ {:?}", now);
-            interarrival_ns = rand_distr::Exp::new(target * 1e-9).unwrap();
             while npending.load(atomic::Ordering::Acquire) != 0 {
                 std::thread::yield_now();
             }
