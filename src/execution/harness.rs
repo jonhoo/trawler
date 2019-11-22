@@ -82,7 +82,7 @@ where
         }
     } else {
         // check that implementation is sane and error early if it's not
-        rt.block_on(client.handle(None, LobstersRequest::Frontpage))
+        rt.block_on(client.handle(None, LobstersRequest::Frontpage, false))
             .expect("given client cannot handle frontpage request");
     }
 
@@ -94,7 +94,7 @@ where
 
     // then, log in all the users
     let mut all = FuturesUnordered::from_iter(
-        (0..sampler.nusers()).map(|u| client.handle(Some(u), LobstersRequest::Login)),
+        (0..sampler.nusers()).map(|u| client.handle(Some(u), LobstersRequest::Login, false)),
     );
     rt.block_on(async move {
         while let Some(r) = all.next().await {
@@ -114,7 +114,7 @@ where
                 id: id_to_slug(id),
                 title: format!("Base article {}", id),
             };
-            futs.push(client.handle(Some(sampler.user(&mut rng)), req));
+            futs.push(client.handle(Some(sampler.user(&mut rng)), req, true));
         }
 
         // and as many comments
@@ -154,7 +154,7 @@ where
             };
 
             // NOTE: we're assuming that users who vote much also submit many stories
-            futs.push(client.handle(Some(sampler.user(&mut rng)), req));
+            futs.push(client.handle(Some(sampler.user(&mut rng)), req, true));
         }
 
         // wait for all priming comments
@@ -167,7 +167,7 @@ where
     }
 
     // issue an early Frontpage request to ensure that everyone knows we've started for real
-    rt.block_on(client.handle(None, LobstersRequest::Frontpage))
+    rt.block_on(client.handle(None, LobstersRequest::Frontpage, false))
         .expect("given client cannot handle frontpage request");
 
     let start = time::Instant::now();
@@ -286,7 +286,7 @@ where
 
         let issued = next;
         let rtype = mem::discriminant(&req);
-        let fut = client.handle(user, req);
+        let fut = client.handle(user, req, false);
         npending.fetch_add(1, atomic::Ordering::AcqRel);
         rt.spawn(async move {
             let _ = issued.elapsed();

@@ -37,7 +37,16 @@ pub trait LobstersClient {
 
     /// Handle the given lobste.rs request, made on behalf of the given user,
     /// returning a future that resolves when the request has been satisfied.
-    fn handle(&mut self, user: Option<UserId>, request: LobstersRequest) -> Self::RequestFuture;
+    ///
+    /// The `priming` argument is set to true if the request is being issued just to populate the
+    /// database. In this case, the backend need only issue writes and not do any other processing
+    /// normally associated with the given `request`.
+    fn handle(
+        &mut self,
+        user: Option<UserId>,
+        request: LobstersRequest,
+        priming: bool,
+    ) -> Self::RequestFuture;
 }
 
 /// A unique lobste.rs six-character story id.

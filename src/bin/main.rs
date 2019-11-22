@@ -93,6 +93,7 @@ impl trawler::LobstersClient for WebClient {
         &mut self,
         uid: Option<trawler::UserId>,
         req: trawler::LobstersRequest,
+        _priming: bool,
     ) -> Self::RequestFuture {
         let mut expected = hyper::StatusCode::OK;
         let mut req = match req {
