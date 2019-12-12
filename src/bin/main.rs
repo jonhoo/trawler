@@ -1,9 +1,7 @@
 use clap::value_t_or_exit;
 use clap::{App, Arg};
+use futures_util::future::TryFutureExt;
 use futures_util::future::{self, Either};
-use futures_util::try_future::TryFutureExt;
-use futures_util::try_stream::TryStreamExt;
-use headers::HeaderMapExt;
 use lazy_static::lazy_static;
 use trawler::{LobstersRequest, Vote};
 
@@ -51,31 +49,33 @@ impl WebClient {
         s.append_pair("password", "test");
         s.append_pair("commit", "Login");
         s.append_pair("referer", self.prefix.as_ref());
-        req.headers_mut()
-            .unwrap()
-            .typed_insert(headers::ContentType::form_url_encoded());
+        req.headers_mut().unwrap().insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
         let req = req.body(s.finish().into()).unwrap();
 
-        Box::pin(self.client.request(req).and_then(move |res| {
+        let req = self.client.request(req);
+        Box::pin(async move {
+            let res = req.await?;
             if res.status() != hyper::StatusCode::FOUND {
-                Either::Left(res.into_body().try_concat().map_ok(move |body| {
-                    panic!(
-                        "Failed to log in as user{}/test. Make sure to apply the patches!\n{}",
-                        uid,
-                        ::std::str::from_utf8(&*body).unwrap(),
-                    );
-                }))
-            } else {
-                let mut cookie = cookie::CookieJar::new();
-                for c in res.headers().get_all(hyper::header::SET_COOKIE) {
-                    let c = cookie::Cookie::parse(c.to_str().unwrap().to_string()).unwrap();
-                    cookie.add(c);
-                }
-
-                SESSION_COOKIES.write().unwrap().insert(uid, cookie.clone());
-                Either::Right(future::ready(Ok(cookie)))
+                let body = hyper::body::to_bytes(res.into_body()).await?;
+                panic!(
+                    "Failed to log in as user{}/test. Make sure to apply the patches!\n{}",
+                    uid,
+                    ::std::str::from_utf8(&*body).unwrap(),
+                );
             }
-        }))
+
+            let mut cookie = cookie::CookieJar::new();
+            for c in res.headers().get_all(hyper::header::SET_COOKIE) {
+                let c = cookie::Cookie::parse(c.to_str().unwrap().to_string()).unwrap();
+                cookie.add(c);
+            }
+
+            SESSION_COOKIES.write().unwrap().insert(uid, cookie.clone());
+            Ok(cookie)
+        })
     }
 }
 impl trawler::LobstersClient for WebClient {
@@ -195,9 +195,10 @@ impl trawler::LobstersClient for WebClient {
                 s.append_pair("story[title]", &title);
                 s.append_pair("story[description]", "to infinity");
                 s.append_pair("utf8", "✓");
-                req.headers_mut()
-                    .unwrap()
-                    .typed_insert(headers::ContentType::form_url_encoded());
+                req.headers_mut().unwrap().insert(
+                    http::header::CONTENT_TYPE,
+                    http::HeaderValue::from_static("application/x-www-form-urlencoded"),
+                );
                 req.body(s.finish().into()).unwrap()
             }
             LobstersRequest::Comment { id, story, parent } => {
@@ -215,9 +216,10 @@ impl trawler::LobstersClient for WebClient {
                 }
                 s.append_pair("story_id", ::std::str::from_utf8(&story[..]).unwrap());
                 s.append_pair("utf8", "✓");
-                req.headers_mut()
-                    .unwrap()
-                    .typed_insert(headers::ContentType::form_url_encoded());
+                req.headers_mut().unwrap().insert(
+                    http::header::CONTENT_TYPE,
+                    http::HeaderValue::from_static("application/x-www-form-urlencoded"),
+                );
                 req.body(s.finish().into()).unwrap()
             }
         };
@@ -237,22 +239,19 @@ impl trawler::LobstersClient for WebClient {
         };
 
         let client = self.client.clone();
-        Box::pin(req.and_then(move |req| {
-            client.request(req).and_then(move |res| {
-                if res.status() != expected {
-                    let status = res.status();
-                    Either::Left(res.into_body().try_concat().map_ok(move |body| {
-                        panic!(
-                            "{:?} status response. You probably forgot to prime.\n{}",
-                            status,
-                            ::std::str::from_utf8(&*body).unwrap(),
-                        );
-                    }))
-                } else {
-                    Either::Right(future::ready(Ok(())))
-                }
-            })
-        }))
+        Box::pin(async move {
+            let res = client.request(req.await?).await?;
+            if res.status() != expected {
+                let status = res.status();
+                let body = hyper::body::to_bytes(res.into_body()).await?;
+                panic!(
+                    "{:?} status response. You probably forgot to prime.\n{}",
+                    status,
+                    ::std::str::from_utf8(&*body).unwrap(),
+                );
+            }
+            Ok(())
+        })
     }
 }
 

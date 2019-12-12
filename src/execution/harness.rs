@@ -42,11 +42,11 @@ where
 
     let rmt_stats: Arc<Mutex<Stats>> = Arc::default();
     let sjrn_stats: Arc<Mutex<Stats>> = Arc::default();
-    let rt = {
+    let mut rt = {
         let rmt_stats = rmt_stats.clone();
         let sjrn_stats = sjrn_stats.clone();
         tokio::runtime::Builder::new()
-            .before_stop(move || {
+            .on_thread_stop(move || {
                 let _ = RMT_STATS.with(|my_stats| {
                     let mut stats = rmt_stats.lock().unwrap();
                     for (rtype, my_h) in my_stats.borrow_mut().drain() {
@@ -326,8 +326,9 @@ where
     }
 
     drop(client);
-    rt.shutdown_on_idle();
-    assert_eq!(npending.load(atomic::Ordering::Acquire), 0);
+    drop(rt);
+    let unfinished = npending.load(atomic::Ordering::Acquire);
+    ops -= unfinished;
 
     let mut per_second = 0.0;
     let now = time::Instant::now();
