@@ -1,6 +1,6 @@
 [package]
 name = "trawler"
-version = "0.7.1"
+version = "0.7.2"
 edition = "2018"
 
 description = "A workload generator that emulates the traffic to lobste.rs"
@@ -39,7 +39,7 @@ hdrhistogram = "7"
 histogram-sampler = "0.4"
 
 crossbeam-channel = "0.4"
-tokio = { version = "0.2.0" }
+tokio = { version = "0.2.0", features = ["rt-threaded", "io-driver", "time"] }
 futures-core = "0.3.0"
 futures-util = "0.3.0"
 
