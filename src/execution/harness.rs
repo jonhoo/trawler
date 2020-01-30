@@ -46,6 +46,7 @@ where
         let rmt_stats = rmt_stats.clone();
         let sjrn_stats = sjrn_stats.clone();
         tokio::runtime::Builder::new()
+            .enable_all()
             .on_thread_stop(move || {
                 let _ = RMT_STATS.with(|my_stats| {
                     let mut stats = rmt_stats.lock().unwrap();
