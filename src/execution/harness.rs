@@ -116,11 +116,7 @@ where
                 id: id_to_slug(id),
                 title: format!("Base article {}", id),
             };
-            futs.push(tokio::spawn(client.handle(
-                Some(sampler.user(&mut rng)),
-                req,
-                true,
-            )));
+            futs.push(rt.spawn(client.handle(Some(sampler.user(&mut rng)), req, true)));
         }
 
         // and as many comments
@@ -160,11 +156,7 @@ where
             };
 
             // NOTE: we're assuming that users who vote much also submit many stories
-            futs.push(tokio::spawn(client.handle(
-                Some(sampler.user(&mut rng)),
-                req,
-                true,
-            )));
+            futs.push(rt.spawn(client.handle(Some(sampler.user(&mut rng)), req, true)));
         }
 
         // wait for all priming comments
