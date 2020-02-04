@@ -116,7 +116,11 @@ where
                 id: id_to_slug(id),
                 title: format!("Base article {}", id),
             };
-            futs.push(client.handle(Some(sampler.user(&mut rng)), req, true));
+            futs.push(tokio::spawn(client.handle(
+                Some(sampler.user(&mut rng)),
+                req,
+                true,
+            )));
         }
 
         // and as many comments
@@ -128,7 +132,7 @@ where
                 let mut futs = std::mem::replace(&mut futs, FuturesUnordered::new());
                 rt.block_on(async move {
                     while let Some(r) = futs.next().await {
-                        r.unwrap();
+                        r.unwrap().unwrap();
                     }
                 });
             }
@@ -156,13 +160,17 @@ where
             };
 
             // NOTE: we're assuming that users who vote much also submit many stories
-            futs.push(client.handle(Some(sampler.user(&mut rng)), req, true));
+            futs.push(tokio::spawn(client.handle(
+                Some(sampler.user(&mut rng)),
+                req,
+                true,
+            )));
         }
 
         // wait for all priming comments
         rt.block_on(async move {
             while let Some(r) = futs.next().await {
-                r.unwrap();
+                r.unwrap().unwrap();
             }
         });
         println!("--> finished priming database in {:?}", start.elapsed());
