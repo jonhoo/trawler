@@ -82,10 +82,15 @@ impl trawler::LobstersClient for WebClient {
     type Error = hyper::Error;
     type RequestFuture = Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>;
     type SetupFuture = future::Ready<Result<(), Self::Error>>;
+    type ShutdownFuture = future::Ready<Result<(), Self::Error>>;
 
     fn setup(&mut self) -> Self::SetupFuture {
         eprintln!("note: did not re-create backend as lobsters client did not implement setup()");
         eprintln!("note: if priming fails, make sure you have run the lobsters setup scripts");
+        future::ready(Ok(()))
+    }
+
+    fn shutdown(self) -> Self::ShutdownFuture {
         future::ready(Ok(()))
     }
 

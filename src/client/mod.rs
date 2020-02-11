@@ -19,6 +19,9 @@ pub trait LobstersClient {
     /// A future that will resolve once a request has finished processing.
     type RequestFuture: Future<Output = Result<(), Self::Error>> + Send + 'static;
 
+    /// A future that will resolve once client shutdown has finished.
+    type ShutdownFuture: Future<Output = Result<(), Self::Error>> + 'static;
+
     /// Set up a fresh instance of the backend before priming.
     ///
     /// Implementing this allows benchmarking a backend without ever running the lobste.rs
@@ -47,6 +50,11 @@ pub trait LobstersClient {
         request: LobstersRequest,
         priming: bool,
     ) -> Self::RequestFuture;
+
+    /// Initiate shutdown of the client.
+    ///
+    /// The tokio runtime will not be shut down until the returned future resolves.
+    fn shutdown(self) -> Self::ShutdownFuture;
 }
 
 /// A unique lobste.rs six-character story id.

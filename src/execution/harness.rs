@@ -328,7 +328,8 @@ where
         next += time::Duration::new(0, interarrival_ns.sample(&mut rng) as u32);
     }
 
-    drop(client);
+    rt.block_on(client.shutdown())
+        .expect("client shutdown failed");
     drop(rt);
     let unfinished = npending.load(atomic::Ordering::Acquire);
     ops -= unfinished;
