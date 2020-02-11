@@ -94,20 +94,20 @@ where
     let sampler = Sampler::new(load.scale);
     let nstories = sampler.nstories();
 
-    // then, log in all the users
-    let mut all = FuturesUnordered::from_iter(
-        (0..sampler.nusers())
-            .map(|u| rt.spawn(client.handle(Some(u), LobstersRequest::Login, false))),
-    );
-    rt.block_on(async move {
-        while let Some(r) = all.next().await {
-            r.unwrap().unwrap();
-        }
-    });
-
     if prime {
         println!("--> priming database");
         let mut rng = rand::thread_rng();
+
+        // then, log in all the users
+        let mut all = FuturesUnordered::from_iter(
+            (0..sampler.nusers())
+                .map(|u| rt.spawn(client.handle(Some(u), LobstersRequest::Login, true))),
+        );
+        rt.block_on(async move {
+            while let Some(r) = all.next().await {
+                r.unwrap().unwrap();
+            }
+        });
 
         // first, we need to prime the database stories!
         let mut futs = FuturesUnordered::new();
