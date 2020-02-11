@@ -96,11 +96,12 @@ where
 
     // then, log in all the users
     let mut all = FuturesUnordered::from_iter(
-        (0..sampler.nusers()).map(|u| client.handle(Some(u), LobstersRequest::Login, false)),
+        (0..sampler.nusers())
+            .map(|u| rt.spawn(client.handle(Some(u), LobstersRequest::Login, false))),
     );
     rt.block_on(async move {
         while let Some(r) = all.next().await {
-            r.unwrap();
+            r.unwrap().unwrap();
         }
     });
 
