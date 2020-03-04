@@ -1,4 +1,4 @@
-use std::task::{Context, Poll};
+use std::future::Future;
 
 /// A lobste.rs request made as part of a workload.
 ///
@@ -23,10 +23,13 @@ pub struct TrawlerRequest {
 
 /// Asynchronous client shutdown.
 ///
-/// The tokio runtime will not be shut down until this method returns `Poll::Ready`.
+/// The tokio runtime will not be shut down until the returned future resolves.
 pub trait AsyncShutdown {
-    /// Continue the shutdown process.
-    fn poll_shutdown(&mut self, cx: &mut Context<'_>) -> Poll<()>;
+    /// A future that will resolve once client shutdown has finished.
+    type ShutdownFuture: Future<Output = ()>;
+
+    /// Start the shutdown process.
+    fn shutdown(self) -> Self::ShutdownFuture;
 }
 
 /// A unique lobste.rs six-character story id.

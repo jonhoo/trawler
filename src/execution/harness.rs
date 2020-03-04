@@ -389,8 +389,7 @@ where
         next += time::Duration::new(0, interarrival_ns.sample(&mut rng) as u32);
     }
 
-    rt.block_on(futures_util::future::poll_fn(|cx| client.poll_shutdown(cx)));
-    drop(client);
+    rt.block_on(client.shutdown());
     drop(rt);
     let unfinished = npending.load(atomic::Ordering::Acquire);
     ops -= unfinished;

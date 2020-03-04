@@ -272,8 +272,9 @@ impl Service<TrawlerRequest> for WebClient {
 }
 
 impl trawler::AsyncShutdown for WebClient {
-    fn poll_shutdown(&mut self, _: &mut Context<'_>) -> Poll<()> {
-        Poll::Ready(())
+    type ShutdownFuture = futures_util::future::Ready<()>;
+    fn shutdown(self) -> Self::ShutdownFuture {
+        futures_util::future::ready(())
     }
 }
 
