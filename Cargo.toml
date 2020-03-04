@@ -1,28 +1,22 @@
 [package]
 name = "trawler"
 version = "0.8.1"
-edition = "2018"
-
-description = "A workload generator that emulates the traffic to lobste.rs"
-readme = "README.md"
-
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
 
-
-documentation = "https://docs.rs/trawler"
-homepage = "https://github.com/jonhoo/trawler"
+readme = "README.md"
+description = "A workload generator that emulates the traffic to lobste.rs"
 repository = "https://github.com/jonhoo/trawler.git"
 
 keywords = ["workload-generator", "traffic"]
 categories = ["web-programming", "command-line-utilities", "development-tools::profiling", "simulation", "science"]
 
-license = "MIT/Apache-2.0"
-
 build = "data-import.rs"
 
 [badges]
-travis-ci = { repository = "jonhoo/tsunami" }
-maintenance = { status = "actively-developed" }
+travis-ci = { repository = "jonhoo/trawler" }
+maintenance = { status = "experimental" }
 
 [features]
 cli = ["clap", "hyper", "cookie", "http", "url", "regex", "lazy_static"]
