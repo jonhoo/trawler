@@ -113,9 +113,9 @@ impl<'a> WorkloadBuilder<'a> {
     pub fn run<MS>(&self, client: MS, prime: bool)
     where
         MS: tower_make::MakeService<bool, client::TrawlerRequest>,
-        MS::MakeError: std::error::Error,
+        MS::MakeError: std::fmt::Debug,
         <MS::Service as tower_service::Service<client::TrawlerRequest>>::Future: Send + 'static,
-        MS::Error: std::error::Error + Send + 'static,
+        MS::Error: std::fmt::Debug + Send + 'static,
         MS::Response: Send + 'static,
         MS::Service: client::AsyncShutdown,
     {

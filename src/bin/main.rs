@@ -272,8 +272,8 @@ impl Service<TrawlerRequest> for WebClient {
 }
 
 impl trawler::AsyncShutdown for WebClient {
-    type ShutdownFuture = futures_util::future::Ready<()>;
-    fn shutdown(self) -> Self::ShutdownFuture {
+    type Future = futures_util::future::Ready<()>;
+    fn shutdown(self) -> Self::Future {
         futures_util::future::ready(())
     }
 }

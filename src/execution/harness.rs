@@ -56,9 +56,9 @@ pub(crate) fn run<MS>(
 ) -> (f64, execution::Stats, execution::Stats, usize)
 where
     MS: MakeService<bool, TrawlerRequest>,
-    MS::MakeError: std::error::Error,
+    MS::MakeError: std::fmt::Debug,
     <MS::Service as Service<TrawlerRequest>>::Future: Send + 'static,
-    MS::Error: std::error::Error + Send + 'static,
+    MS::Error: std::fmt::Debug + Send + 'static,
     MS::Response: Send + 'static,
     MS::Service: AsyncShutdown,
 {

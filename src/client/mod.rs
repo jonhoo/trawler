@@ -26,10 +26,10 @@ pub struct TrawlerRequest {
 /// The tokio runtime will not be shut down until the returned future resolves.
 pub trait AsyncShutdown {
     /// A future that will resolve once client shutdown has finished.
-    type ShutdownFuture: Future<Output = ()>;
+    type Future: Future<Output = ()>;
 
     /// Start the shutdown process.
-    fn shutdown(self) -> Self::ShutdownFuture;
+    fn shutdown(self) -> Self::Future;
 }
 
 /// A unique lobste.rs six-character story id.
