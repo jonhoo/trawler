@@ -37,6 +37,8 @@ rand_distr = "0.2"
 zipf = "6.0.0"
 hdrhistogram = "7"
 histogram-sampler = "0.4"
+tower-service = "0.3"
+tower-make = "0.3"
 
 crossbeam-channel = "0.4"
 tokio = { version = "0.2.0", features = ["rt-threaded", "io-driver", "time"] }

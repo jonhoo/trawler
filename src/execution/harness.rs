@@ -1,4 +1,4 @@
-use crate::client::{LobstersClient, LobstersRequest, Vote};
+use crate::client::{AsyncShutdown, LobstersRequest, TrawlerRequest, Vote};
 use crate::execution::Stats;
 use crate::execution::{self, id_to_slug, Sampler, MAX_SLUGGABLE_ID};
 use crate::BASE_OPS_PER_MIN;
@@ -11,20 +11,56 @@ use std::cell::RefCell;
 use std::iter::FromIterator;
 use std::sync::{atomic, Arc, Mutex};
 use std::{mem, time};
+use tower_make::MakeService;
+use tower_service::Service;
 
 thread_local! {
     static RMT_STATS: RefCell<Stats> = RefCell::new(Stats::default());
     static SJRN_STATS: RefCell<Stats> = RefCell::new(Stats::default());
 }
 
-pub(crate) fn run<C>(
+macro_rules! await_ready {
+    ($rt:ident, $client:ident) => {
+        $rt.block_on(futures_util::future::poll_fn(|cx| $client.poll_ready(cx)))
+            .expect("service failed to become ready");
+    };
+}
+macro_rules! await_all {
+    ($rt:ident, $fu:ident) => {
+        $rt.block_on(async move {
+            let mut futs = $fu;
+            while let Some(r) = futs.next().await {
+                r.unwrap().unwrap();
+            }
+        });
+    };
+}
+macro_rules! call {
+    ($rt:ident, $client:ident, $req:expr) => {{
+        await_ready!($rt, $client);
+        $client.call($req)
+    }};
+}
+macro_rules! spawn_call {
+    ($rt:ident, $client:ident, $req:expr) => {{
+        let fut = call!($rt, $client, $req);
+        $rt.spawn(fut)
+    }};
+}
+
+pub(crate) fn run<MS>(
     load: execution::Workload,
     in_flight: usize,
-    mut client: C,
+    mut client: MS,
     prime: bool,
 ) -> (f64, execution::Stats, execution::Stats, usize)
 where
-    C: LobstersClient,
+    MS: MakeService<bool, TrawlerRequest>,
+    MS::MakeError: std::error::Error,
+    <MS::Service as Service<TrawlerRequest>>::Future: Send + 'static,
+    MS::Error: std::error::Error + Send + 'static,
+    MS::Response: Send + 'static,
+    MS::Service: AsyncShutdown,
 {
     let target = BASE_OPS_PER_MIN as f64 * load.scale / 60.0;
 
@@ -78,14 +114,18 @@ where
             .unwrap()
     };
 
-    if prime {
-        if let Err(e) = rt.block_on(client.setup()) {
-            panic!("client setup failed: {:?}", e);
-        }
-    } else {
+    let mut client = rt
+        .block_on(client.make_service(prime))
+        .expect("client setup failed");
+    if !prime {
         // check that implementation is sane and error early if it's not
-        rt.block_on(client.handle(None, LobstersRequest::Frontpage, false))
-            .expect("given client cannot handle frontpage request");
+        await_ready!(rt, client);
+        rt.block_on(client.call(TrawlerRequest {
+            user: None,
+            page: LobstersRequest::Frontpage,
+            is_priming: false,
+        }))
+        .expect("given client cannot handle frontpage request");
     }
 
     let start = time::Instant::now();
@@ -99,25 +139,35 @@ where
         let mut rng = rand::thread_rng();
 
         // then, log in all the users
-        let mut all = FuturesUnordered::from_iter(
-            (0..sampler.nusers())
-                .map(|u| rt.spawn(client.handle(Some(u), LobstersRequest::Login, true))),
-        );
-        rt.block_on(async move {
-            while let Some(r) = all.next().await {
-                r.unwrap().unwrap();
-            }
-        });
+        let all = FuturesUnordered::from_iter((0..sampler.nusers()).map(|u| {
+            spawn_call!(
+                rt,
+                client,
+                TrawlerRequest {
+                    user: Some(u),
+                    page: LobstersRequest::Login,
+                    is_priming: true,
+                }
+            )
+        }));
+        await_all!(rt, all);
 
         // first, we need to prime the database stories!
         let mut futs = FuturesUnordered::new();
         for id in 0..nstories {
             // NOTE: we're assuming that users who vote much also submit many stories
-            let req = LobstersRequest::Submit {
-                id: id_to_slug(id),
-                title: format!("Base article {}", id),
-            };
-            futs.push(rt.spawn(client.handle(Some(sampler.user(&mut rng)), req, true)));
+            futs.push(spawn_call!(
+                rt,
+                client,
+                TrawlerRequest {
+                    user: Some(sampler.user(&mut rng)),
+                    page: LobstersRequest::Submit {
+                        id: id_to_slug(id),
+                        title: format!("Base article {}", id),
+                    },
+                    is_priming: true
+                }
+            ));
         }
 
         // and as many comments
@@ -126,12 +176,8 @@ where
 
             // synchronize occasionally to ensure that we can safely generate parent comments
             if story == 0 {
-                let mut futs = std::mem::replace(&mut futs, FuturesUnordered::new());
-                rt.block_on(async move {
-                    while let Some(r) = futs.next().await {
-                        r.unwrap().unwrap();
-                    }
-                });
+                let futs = std::mem::replace(&mut futs, FuturesUnordered::new());
+                await_all!(rt, futs);
             }
 
             let parent = if rng.gen_bool(0.5) {
@@ -150,28 +196,35 @@ where
                 None
             };
 
-            let req = LobstersRequest::Comment {
-                id: id_to_slug(id),
-                story: id_to_slug(story),
-                parent: parent.map(id_to_slug),
-            };
-
             // NOTE: we're assuming that users who vote much also submit many stories
-            futs.push(rt.spawn(client.handle(Some(sampler.user(&mut rng)), req, true)));
+            futs.push(spawn_call!(
+                rt,
+                client,
+                TrawlerRequest {
+                    user: Some(sampler.user(&mut rng)),
+                    page: LobstersRequest::Comment {
+                        id: id_to_slug(id),
+                        story: id_to_slug(story),
+                        parent: parent.map(id_to_slug),
+                    },
+                    is_priming: true
+                }
+            ));
         }
 
         // wait for all priming comments
-        rt.block_on(async move {
-            while let Some(r) = futs.next().await {
-                r.unwrap().unwrap();
-            }
-        });
+        await_all!(rt, futs);
         println!("--> finished priming database in {:?}", start.elapsed());
     }
 
     // issue an early Frontpage request to ensure that everyone knows we've started for real
-    rt.block_on(client.handle(None, LobstersRequest::Frontpage, false))
-        .expect("given client cannot handle frontpage request");
+    await_ready!(rt, client);
+    rt.block_on(client.call(TrawlerRequest {
+        user: None,
+        page: LobstersRequest::Frontpage,
+        is_priming: false,
+    }))
+    .expect("given client cannot handle frontpage request");
 
     let start = time::Instant::now();
     let mut count_from = start + warmup;
@@ -289,7 +342,15 @@ where
 
         let issued = next;
         let rtype = mem::discriminant(&req);
-        let fut = client.handle(user, req, false);
+        let fut = call!(
+            rt,
+            client,
+            TrawlerRequest {
+                user,
+                page: req,
+                is_priming: false
+            }
+        );
         npending.fetch_add(1, atomic::Ordering::AcqRel);
         rt.spawn(async move {
             let _ = issued.elapsed();
@@ -328,8 +389,8 @@ where
         next += time::Duration::new(0, interarrival_ns.sample(&mut rng) as u32);
     }
 
-    rt.block_on(client.shutdown())
-        .expect("client shutdown failed");
+    rt.block_on(futures_util::future::poll_fn(|cx| client.poll_shutdown(cx)));
+    drop(client);
     drop(rt);
     let unfinished = npending.load(atomic::Ordering::Acquire);
     ops -= unfinished;

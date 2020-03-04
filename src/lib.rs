@@ -7,23 +7,23 @@
 //!
 //! The benchmarker main component is the "load generator". It generates requests according to
 //! actual lobste.rs traffic patterns as reported in [here](https://lobste.rs/s/cqnzl5/), records
-//! the request time, and sends the request description to an implementor of [`LobstersClient`].
-//! When the resulting future resolves, the generator logs how long the request took to process,
-//! *and* how long the request took from when it was generated until it was satisfied (this is
-//! called the *sojourn time*).
+//! the request time, and sends the request description to an implementor of
+//! `Service<TrawlerRequest>`. When the resulting future resolves, the generator logs how long the
+//! request took to process, *and* how long the request took from when it was generated until it
+//! was satisfied (this is called the *sojourn time*).
 //!
 //! Trawler is written so that it can *either* be run against an instance of
 //! the [lobsters Rails app](https://github.com/lobsters/lobsters) *or*
 //! directly against a backend by issuing queries. The former is done using the provided binary,
 //! whereas the latter is done by linking against this crate as a library an implementing the
-//! [`LobstersClient`] trait. The latter allows benchmarking a data storage backend without also
-//! incurring the overhead of the Rails frontend. Note that if you want to benchmark against the
-//! Rails application, you must apply the patches in `lobsters.diff` first.
+//! `Service` trait. The latter allows benchmarking a data storage backend without also incurring
+//! the overhead of the Rails frontend. Note that if you want to benchmark against the Rails
+//! application, you must apply the patches in `lobsters.diff` first.
 #![deny(missing_docs)]
 
 mod client;
+pub use self::client::{AsyncShutdown, LobstersRequest, TrawlerRequest, Vote};
 pub use self::client::{CommentId, StoryId, UserId};
-pub use self::client::{LobstersClient, LobstersRequest, Vote};
 
 mod execution;
 
@@ -106,9 +106,18 @@ impl<'a> WorkloadBuilder<'a> {
     /// no need to prime again unless the backend is emptied or the scaling factor is changed. Note
     /// that priming does not delete the database, nor detect the current scaling factor, so always
     /// empty the backend before calling `run` with `prime` set.
-    pub fn run<C>(&self, client: C, prime: bool)
+    ///
+    /// The provided client must be able to (asynchronously) create a `Service<TrawlerRequest>`. To
+    /// do so, it must implement `Service<bool>`, where the boolean parameter indicates whether
+    /// the database is also scheduled to be primed before the workload begins.
+    pub fn run<MS>(&self, client: MS, prime: bool)
     where
-        C: LobstersClient + 'static,
+        MS: tower_make::MakeService<bool, client::TrawlerRequest>,
+        MS::MakeError: std::error::Error,
+        <MS::Service as tower_service::Service<client::TrawlerRequest>>::Future: Send + 'static,
+        MS::Error: std::error::Error + Send + 'static,
+        MS::Response: Send + 'static,
+        MS::Service: client::AsyncShutdown,
     {
         let hists: (HashMap<_, _>, HashMap<_, _>) =
             if let Some(mut f) = self.histogram_file.and_then(|h| fs::File::open(h).ok()) {

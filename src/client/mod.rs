@@ -1,60 +1,32 @@
-use std::future::Future;
+use std::task::{Context, Poll};
 
-/// Implementors of this trait handle [`LobstersRequest`] that correspond to "real" lobste.rs
-/// website requests queued up by the workload generator.
+/// A lobste.rs request made as part of a workload.
 ///
-/// Note that the workload generator does not check that the implementor correctly perform the
-/// queries corresponding to each request; this must be verified with manual inspection of the
-/// Rails application or its query logs.
-pub trait LobstersClient {
-    /// Errors produced by the client.
-    ///
-    /// If any errors are produced, they are generally printed rather than returned.
-    type Error: std::fmt::Debug + Send + 'static;
+/// Trawler generates requests of this type that correspond to "real" lobste.rs website requests.
+///
+/// Trawler does not check that the implementor correctly perform the queries corresponding to each
+/// request; this must be verified with manual inspection of the Rails application or its query
+/// logs.
+#[non_exhaustive]
+pub struct TrawlerRequest {
+    /// The user making the request.
+    pub user: Option<UserId>,
 
-    /// A future that will resolve once setup has finished.
-    // NOTE: these should be IntoFuture, but then we can't give the Send bound
-    type SetupFuture: Future<Output = Result<(), Self::Error>> + Send + 'static;
+    /// The specific page to be requested/rendered.
+    pub page: LobstersRequest,
 
-    /// A future that will resolve once a request has finished processing.
-    type RequestFuture: Future<Output = Result<(), Self::Error>> + Send + 'static;
+    /// `is_priming` is set to true if the request is being issued just to populate the database.
+    /// In this case, the backend need only issue writes and not do any other processing normally
+    /// associated with the given `request`.
+    pub is_priming: bool,
+}
 
-    /// A future that will resolve once client shutdown has finished.
-    type ShutdownFuture: Future<Output = Result<(), Self::Error>> + 'static;
-
-    /// Set up a fresh instance of the backend before priming.
-    ///
-    /// Implementing this allows benchmarking a backend without ever running the lobste.rs
-    /// application. Normally, a backend would need to run the lobsters setup routine:
-    ///
-    /// ```console
-    /// $ rails db:drop
-    /// $ rails db:create
-    /// $ rails db:schema:load
-    /// $ rails db:seed
-    /// ```
-    ///
-    /// The default implementation of this method just prints an informational message saying that
-    /// the backend was not re-created.
-    fn setup(&mut self) -> Self::SetupFuture;
-
-    /// Handle the given lobste.rs request, made on behalf of the given user,
-    /// returning a future that resolves when the request has been satisfied.
-    ///
-    /// The `priming` argument is set to true if the request is being issued just to populate the
-    /// database. In this case, the backend need only issue writes and not do any other processing
-    /// normally associated with the given `request`.
-    fn handle(
-        &mut self,
-        user: Option<UserId>,
-        request: LobstersRequest,
-        priming: bool,
-    ) -> Self::RequestFuture;
-
-    /// Initiate shutdown of the client.
-    ///
-    /// The tokio runtime will not be shut down until the returned future resolves.
-    fn shutdown(self) -> Self::ShutdownFuture;
+/// Asynchronous client shutdown.
+///
+/// The tokio runtime will not be shut down until this method returns `Poll::Ready`.
+pub trait AsyncShutdown {
+    /// Continue the shutdown process.
+    fn poll_shutdown(&mut self, cx: &mut Context<'_>) -> Poll<()>;
 }
 
 /// A unique lobste.rs six-character story id.

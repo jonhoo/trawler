@@ -11,18 +11,17 @@ approximates the partly open-loop designed outlined in [*Open Versus Closed: A C
 Tale*](https://www.usenix.org/legacy/event/nsdi06/tech/full_papers/schroeder/schroeder.pdf) by
 having clients potentially issue more than one query per request.
 
-The benchmarker has two main components: load generators and issuers. Load generators generate
-requests according to actual lobste.rs traffic patterns as reported in
-[here](https://lobste.rs/s/cqnzl5/), records the request time, and puts the request description
-into a queue. Issuers take requests from the queue and issues that request to the backend. When
-the backend responds, the issuer logs how long the request took to process, *and* how long the
-request took from when it was generated until it was satisfied (this is called the *sojourn
-time*).
+The benchmarker main component is the "load generator". It generates requests according to
+actual lobste.rs traffic patterns as reported in [here](https://lobste.rs/s/cqnzl5/), records
+the request time, and sends the request description to an implementor of
+`Service<TrawlerRequest>`. When the resulting future resolves, the generator logs how long the
+request took to process, *and* how long the request took from when it was generated until it
+was satisfied (this is called the *sojourn time*).
 
 Trawler is written so that it can *either* be run against an instance of
 the [lobsters Rails app](https://github.com/lobsters/lobsters) *or*
 directly against a backend by issuing queries. The former is done using the provided binary,
 whereas the latter is done by linking against this crate as a library an implementing the
-[`LobstersClient`] trait. The latter allows benchmarking a data storage backend without also
-incurring the overhead of the Rails frontend. Note that if you want to benchmark against the
-Rails application, you must apply the patches in `lobsters.diff` first.
+`Service` trait. The latter allows benchmarking a data storage backend without also incurring
+the overhead of the Rails frontend. Note that if you want to benchmark against the Rails
+application, you must apply the patches in `lobsters.diff` first.

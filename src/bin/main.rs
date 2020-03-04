@@ -3,19 +3,22 @@ use clap::{App, Arg};
 use futures_util::future::TryFutureExt;
 use futures_util::future::{self, Either};
 use lazy_static::lazy_static;
-use trawler::{LobstersRequest, Vote};
+use tower_service::Service;
+use trawler::{LobstersRequest, TrawlerRequest, Vote};
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::RwLock;
+use std::task::{Context, Poll};
 use std::time;
 
 lazy_static! {
     static ref SESSION_COOKIES: RwLock<HashMap<u32, cookie::CookieJar>> = RwLock::default();
 }
 
+#[derive(Clone)]
 struct WebClient {
     prefix: url::Url,
     client: hyper::Client<hyper::client::HttpConnector>,
@@ -78,28 +81,36 @@ impl WebClient {
         })
     }
 }
-impl trawler::LobstersClient for WebClient {
-    type Error = hyper::Error;
-    type RequestFuture = Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>;
-    type SetupFuture = future::Ready<Result<(), Self::Error>>;
-    type ShutdownFuture = future::Ready<Result<(), Self::Error>>;
 
-    fn setup(&mut self) -> Self::SetupFuture {
+impl Service<bool> for WebClient {
+    type Response = Self;
+    type Error = hyper::Error;
+    type Future = futures_util::future::Ready<Result<Self::Response, Self::Error>>;
+    fn poll_ready(&mut self, _: &mut Context) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+    fn call(&mut self, _: bool) -> Self::Future {
         eprintln!("note: did not re-create backend as lobsters client did not implement setup()");
         eprintln!("note: if priming fails, make sure you have run the lobsters setup scripts");
-        future::ready(Ok(()))
+        futures_util::future::ready(Ok(self.clone()))
     }
+}
 
-    fn shutdown(self) -> Self::ShutdownFuture {
-        future::ready(Ok(()))
+impl Service<TrawlerRequest> for WebClient {
+    type Response = ();
+    type Error = hyper::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>;
+    fn poll_ready(&mut self, _: &mut Context) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
-
-    fn handle(
+    fn call(
         &mut self,
-        uid: Option<trawler::UserId>,
-        req: trawler::LobstersRequest,
-        _priming: bool,
-    ) -> Self::RequestFuture {
+        TrawlerRequest {
+            user: uid,
+            page: req,
+            ..
+        }: TrawlerRequest,
+    ) -> Self::Future {
         let mut expected = hyper::StatusCode::OK;
         let mut req = match req {
             LobstersRequest::Frontpage => {
@@ -257,6 +268,12 @@ impl trawler::LobstersClient for WebClient {
             }
             Ok(())
         })
+    }
+}
+
+impl trawler::AsyncShutdown for WebClient {
+    fn poll_shutdown(&mut self, _: &mut Context<'_>) -> Poll<()> {
+        Poll::Ready(())
     }
 }
 
