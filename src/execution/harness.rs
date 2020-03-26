@@ -8,7 +8,6 @@ use hdrhistogram::Histogram;
 use rand::distributions::Distribution;
 use rand::{self, Rng};
 use std::cell::RefCell;
-use std::iter::FromIterator;
 use std::sync::{atomic, Arc, Mutex};
 use std::{mem, time};
 use tower_make::MakeService;
@@ -27,12 +26,21 @@ macro_rules! await_ready {
 }
 macro_rules! await_all {
     ($rt:ident, $fu:ident) => {
-        $rt.block_on(async move {
-            let mut futs = $fu;
-            while let Some(r) = futs.next().await {
-                r.unwrap().unwrap();
-            }
-        });
+        if !$fu.is_empty() {
+            let mut futs = std::mem::replace(&mut $fu, FuturesUnordered::new());
+            $rt.block_on(async move {
+                while let Some(r) = futs.next().await {
+                    r.unwrap().unwrap();
+                }
+            });
+        }
+    };
+}
+macro_rules! maybe_await_all {
+    ($rt:ident, $fu:ident, $cap:expr) => {
+        if $fu.len() >= $cap {
+            await_all!($rt, $fu);
+        }
     };
 }
 macro_rules! call {
@@ -139,18 +147,20 @@ where
         let mut rng = rand::thread_rng();
 
         // then, log in all the users
-        let all = FuturesUnordered::from_iter((0..sampler.nusers()).map(|u| {
-            spawn_call!(
+        let mut futs = FuturesUnordered::new();
+        for uid in 0..sampler.nusers() {
+            futs.push(spawn_call!(
                 rt,
                 client,
                 TrawlerRequest {
-                    user: Some(u),
+                    user: Some(uid),
                     page: LobstersRequest::Login,
                     is_priming: true,
                 }
-            )
-        }));
-        await_all!(rt, all);
+            ));
+            maybe_await_all!(rt, futs, in_flight);
+        }
+        await_all!(rt, futs);
 
         // first, we need to prime the database stories!
         let mut futs = FuturesUnordered::new();
@@ -168,7 +178,9 @@ where
                     is_priming: true
                 }
             ));
+            maybe_await_all!(rt, futs, in_flight);
         }
+        await_all!(rt, futs);
 
         // and as many comments
         for id in 0..sampler.ncomments() {
@@ -176,7 +188,6 @@ where
 
             // synchronize occasionally to ensure that we can safely generate parent comments
             if story == 0 {
-                let futs = std::mem::replace(&mut futs, FuturesUnordered::new());
                 await_all!(rt, futs);
             }
 
@@ -210,6 +221,7 @@ where
                     is_priming: true
                 }
             ));
+            maybe_await_all!(rt, futs, in_flight);
         }
 
         // wait for all priming comments
