@@ -125,16 +125,6 @@ where
     let mut client = rt
         .block_on(client.make_service(prime))
         .expect("client setup failed");
-    if !prime {
-        // check that implementation is sane and error early if it's not
-        await_ready!(rt, client);
-        rt.block_on(client.call(TrawlerRequest {
-            user: None,
-            page: LobstersRequest::Frontpage,
-            is_priming: false,
-        }))
-        .expect("given client cannot handle frontpage request");
-    }
 
     let start = time::Instant::now();
 
@@ -228,15 +218,6 @@ where
         await_all!(rt, futs);
         println!("--> finished priming database in {:?}", start.elapsed());
     }
-
-    // issue an early Frontpage request to ensure that everyone knows we've started for real
-    await_ready!(rt, client);
-    rt.block_on(client.call(TrawlerRequest {
-        user: None,
-        page: LobstersRequest::Frontpage,
-        is_priming: false,
-    }))
-    .expect("given client cannot handle frontpage request");
 
     let start = time::Instant::now();
     let mut count_from = start + warmup;
