@@ -133,7 +133,7 @@ where
     let nstories = sampler.nstories();
 
     if prime {
-        println!("--> priming database");
+        eprintln!("--> priming database");
         let mut rng = rand::thread_rng();
 
         // then, log in all the users
@@ -216,7 +216,7 @@ where
 
         // wait for all priming comments
         await_all!(rt, futs);
-        println!("--> finished priming database in {:?}", start.elapsed());
+        eprintln!("--> finished priming database in {:?}", start.elapsed());
     }
 
     let start = time::Instant::now();
@@ -247,7 +247,7 @@ where
             // we want to make sure we don't "pollute" the main run with time spent in warmup.
             // for example,if warmup has built up a queue, we want that queue to drain before we
             // start to measure runtime.
-            println!("--> warmup finished; flushing queues @ {:?}", now);
+            eprintln!("--> warmup finished; flushing queues @ {:?}", now);
             while npending.load(atomic::Ordering::Acquire) != 0 {
                 std::thread::yield_now();
             }
@@ -258,7 +258,7 @@ where
             waited_after_warmup = true;
             now = time::Instant::now();
             next = now;
-            println!("--> queues flushed after warmup in {:?}", waited);
+            eprintln!("--> queues flushed after warmup in {:?}", waited);
         }
 
         // randomly pick next request type based on relative frequency
