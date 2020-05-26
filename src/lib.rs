@@ -135,7 +135,7 @@ impl<'a> WorkloadBuilder<'a> {
                     .map(|variant| {
                         (
                             variant,
-                            Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap(),
+                            Histogram::<u64>::new_with_bounds(1, 60_000_000, 3).unwrap(),
                         )
                     })
                     .collect();
@@ -143,7 +143,7 @@ impl<'a> WorkloadBuilder<'a> {
                     .map(|variant| {
                         (
                             variant,
-                            Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap(),
+                            Histogram::<u64>::new_with_bounds(1, 60_000_000, 3).unwrap(),
                         )
                     })
                     .collect();

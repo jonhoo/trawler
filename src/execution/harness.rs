@@ -362,24 +362,20 @@ where
                 stats
                     .borrow_mut()
                     .entry(rtype)
-                    .or_insert_with(|| Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap())
-                    .saturating_record(
-                        rmt_time.as_secs() * 1_000 + rmt_time.subsec_nanos() as u64 / 1_000_000,
-                    );
+                    .or_insert_with(|| Histogram::<u64>::new_with_bounds(1, 60_000_000, 3).unwrap())
+                    .saturating_record(rmt_time.as_micros() as u64);
             });
             SJRN_STATS.with(|stats| {
                 stats
                     .borrow_mut()
                     .entry(rtype)
-                    .or_insert_with(|| Histogram::<u64>::new_with_bounds(1, 10_000, 4).unwrap())
-                    .saturating_record(
-                        sjrn_time.as_secs() * 1_000 + sjrn_time.subsec_nanos() as u64 / 1_000_000,
-                    );
+                    .or_insert_with(|| Histogram::<u64>::new_with_bounds(1, 60_000_000, 3).unwrap())
+                    .saturating_record(sjrn_time.as_micros() as u64);
             });
         });
 
         // schedule next delivery
-        next += time::Duration::new(0, interarrival_ns.sample(&mut rng) as u32);
+        next += time::Duration::from_nanos(interarrival_ns.sample(&mut rng) as u64);
     }
 
     rt.block_on(client.shutdown());
@@ -392,8 +388,7 @@ where
     if now > count_from {
         let took = now.duration_since(count_from);
         if took != time::Duration::new(0, 0) {
-            per_second =
-                ops as f64 / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
+            per_second = ops as f64 / took.as_secs_f64()
         }
     }
 
