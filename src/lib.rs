@@ -198,7 +198,7 @@ impl<'a> WorkloadBuilder<'a> {
             }
         }
 
-        println!("{:<12}\t{:<12}\tpct\tms", "# op", "metric");
+        println!("{:<12}\t{:<12}\tpct\tµs", "# op", "metric");
         for variant in LobstersRequest::all() {
             if let Some(h) = sjrn_t.get(&variant) {
                 if h.max() == 0 {
