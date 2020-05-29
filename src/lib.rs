@@ -26,9 +26,8 @@ pub use self::client::{AsyncShutdown, LobstersRequest, TrawlerRequest, Vote};
 pub use self::client::{CommentId, StoryId, UserId};
 
 mod execution;
+mod timing;
 
-use hdrhistogram::Histogram;
-use std::collections::HashMap;
 use std::fs;
 use std::time;
 
@@ -51,7 +50,6 @@ impl<'a> Default for WorkloadBuilder<'a> {
             load: execution::Workload {
                 scale: 1.0,
 
-                warmup: time::Duration::from_secs(10),
                 runtime: time::Duration::from_secs(30),
             },
             histogram_file: None,
@@ -74,8 +72,7 @@ impl<'a> WorkloadBuilder<'a> {
     }
 
     /// Set the runtime for the benchmark.
-    pub fn time(&mut self, warmup: time::Duration, runtime: time::Duration) -> &mut Self {
-        self.load.warmup = warmup;
+    pub fn time(&mut self, runtime: time::Duration) -> &mut Self {
         self.load.runtime = runtime;
         self
     }
@@ -89,9 +86,6 @@ impl<'a> WorkloadBuilder<'a> {
 
     /// Instruct the load generator to store raw histogram data of request latencies into the given
     /// file upon completion.
-    ///
-    /// If the given file exists at the start of the benchmark, the existing histograms will be
-    /// amended, not replaced.
     pub fn with_histogram<'this>(&'this mut self, path: &'a str) -> &'this mut Self {
         self.histogram_file = Some(path);
         self
@@ -119,57 +113,9 @@ impl<'a> WorkloadBuilder<'a> {
         MS::Response: Send + 'static,
         MS::Service: client::AsyncShutdown,
     {
-        let hists: (HashMap<_, _>, HashMap<_, _>) =
-            if let Some(mut f) = self.histogram_file.and_then(|h| fs::File::open(h).ok()) {
-                use hdrhistogram::serialization::Deserializer;
-                let mut deserializer = Deserializer::new();
-                let sjrn = LobstersRequest::all()
-                    .map(|variant| (variant, deserializer.deserialize(&mut f).unwrap()))
-                    .collect();
-                let rmt = LobstersRequest::all()
-                    .map(|variant| (variant, deserializer.deserialize(&mut f).unwrap()))
-                    .collect();
-                (sjrn, rmt)
-            } else {
-                let sjrn = LobstersRequest::all()
-                    .map(|variant| {
-                        (
-                            variant,
-                            Histogram::<u64>::new_with_bounds(1, 60_000_000, 3).unwrap(),
-                        )
-                    })
-                    .collect();
-                let rmt = LobstersRequest::all()
-                    .map(|variant| {
-                        (
-                            variant,
-                            Histogram::<u64>::new_with_bounds(1, 60_000_000, 3).unwrap(),
-                        )
-                    })
-                    .collect();
-                (sjrn, rmt)
-            };
-        let (mut sjrn_t, mut rmt_t) = hists;
-
         // actually run the workload
-        let (generated_per_sec, rmt, sjrn, dropped) =
+        let (start, generated_per_sec, timing, dropped) =
             execution::harness::run(self.load.clone(), self.max_in_flight, client, prime);
-
-        // incorporate results
-        for (variant, h) in sjrn {
-            sjrn_t
-                .get_mut(&variant)
-                .expect("missing entry for variant")
-                .add(h)
-                .unwrap();
-        }
-        for (variant, h) in rmt {
-            rmt_t
-                .get_mut(&variant)
-                .expect("missing entry for variant")
-                .add(h)
-                .unwrap();
-        }
 
         // all done!
         println!(
@@ -182,14 +128,15 @@ impl<'a> WorkloadBuilder<'a> {
         if let Some(h) = self.histogram_file {
             match fs::File::create(h) {
                 Ok(mut f) => {
-                    use hdrhistogram::serialization::Serializer;
-                    use hdrhistogram::serialization::V2Serializer;
-                    let mut s = V2Serializer::new();
+                    use hdrhistogram::serialization::interval_log;
+                    use hdrhistogram::serialization::V2DeflateSerializer;
+                    let mut s = V2DeflateSerializer::new();
+                    let mut w = interval_log::IntervalLogWriterBuilder::new()
+                        .with_base_time(start)
+                        .begin_log_with(&mut f, &mut s)
+                        .unwrap();
                     for variant in LobstersRequest::all() {
-                        s.serialize(&sjrn_t[&variant], &mut f).unwrap();
-                    }
-                    for variant in LobstersRequest::all() {
-                        s.serialize(&rmt_t[&variant], &mut f).unwrap();
+                        timing[&variant].write(&mut w).unwrap();
                     }
                 }
                 Err(e) => {
@@ -200,47 +147,28 @@ impl<'a> WorkloadBuilder<'a> {
 
         println!("{:<12}\t{:<12}\tpct\tµs", "# op", "metric");
         for variant in LobstersRequest::all() {
-            if let Some(h) = sjrn_t.get(&variant) {
-                if h.max() == 0 {
-                    continue;
-                }
-                for &pct in &[50, 95, 99] {
+            if let Some(h) = timing.get(&variant) {
+                let (proc_hist, sjrn_hist) = h.collapse();
+                for (metric, h) in &[("processing", proc_hist), ("sojourn", sjrn_hist)] {
+                    if h.max() == 0 {
+                        continue;
+                    }
+                    for &pct in &[50, 95, 99] {
+                        println!(
+                            "{:<12}\t{:<12}\t{}\t{:.2}",
+                            LobstersRequest::variant_name(&variant),
+                            metric,
+                            pct,
+                            h.value_at_quantile(pct as f64 / 100.0),
+                        );
+                    }
                     println!(
-                        "{:<12}\t{:<12}\t{}\t{:.2}",
+                        "{:<12}\t{:<12}\t100\t{:.2}",
                         LobstersRequest::variant_name(&variant),
-                        "sojourn",
-                        pct,
-                        h.value_at_quantile(pct as f64 / 100.0),
+                        metric,
+                        h.max()
                     );
                 }
-                println!(
-                    "{:<12}\t{:<12}\t100\t{:.2}",
-                    LobstersRequest::variant_name(&variant),
-                    "sojourn",
-                    h.max()
-                );
-            }
-        }
-        for variant in LobstersRequest::all() {
-            if let Some(h) = rmt_t.get(&variant) {
-                if h.max() == 0 {
-                    continue;
-                }
-                for &pct in &[50, 95, 99] {
-                    println!(
-                        "{:<12}\t{:<12}\t{}\t{:.2}",
-                        LobstersRequest::variant_name(&variant),
-                        "processing",
-                        pct,
-                        h.value_at_quantile(pct as f64 / 100.0),
-                    );
-                }
-                println!(
-                    "{:<12}\t{:<12}\t100\t{:.2}",
-                    LobstersRequest::variant_name(&variant),
-                    "processing",
-                    h.max()
-                );
             }
         }
     }

@@ -303,13 +303,6 @@ fn main() {
                 .help("Benchmark runtime in seconds"),
         )
         .arg(
-            Arg::with_name("warmup")
-                .long("warmup")
-                .takes_value(true)
-                .default_value("10")
-                .help("Warmup time in seconds"),
-        )
-        .arg(
             Arg::with_name("histogram")
                 .long("histogram")
                 .help("Use file-based serialized HdrHistograms")
@@ -330,10 +323,10 @@ fn main() {
         .get_matches();
 
     let mut wl = trawler::WorkloadBuilder::default();
-    wl.scale(value_t_or_exit!(args, "scale", f64)).time(
-        time::Duration::from_secs(value_t_or_exit!(args, "warmup", u64)),
-        time::Duration::from_secs(value_t_or_exit!(args, "runtime", u64)),
-    );
+    wl.scale(value_t_or_exit!(args, "scale", f64))
+        .time(time::Duration::from_secs(value_t_or_exit!(
+            args, "runtime", u64
+        )));
 
     if let Some(h) = args.value_of("histogram") {
         wl.with_histogram(h);

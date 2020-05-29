@@ -4,7 +4,6 @@ use crate::execution::{self, id_to_slug, Sampler, MAX_SLUGGABLE_ID};
 use crate::BASE_OPS_PER_MIN;
 use futures_util::stream::futures_unordered::FuturesUnordered;
 use futures_util::stream::StreamExt;
-use hdrhistogram::Histogram;
 use rand::distributions::Distribution;
 use rand::{self, Rng};
 use std::cell::RefCell;
@@ -14,8 +13,7 @@ use tower_make::MakeService;
 use tower_service::Service;
 
 thread_local! {
-    static RMT_STATS: RefCell<Stats> = RefCell::new(Stats::default());
-    static SJRN_STATS: RefCell<Stats> = RefCell::new(Stats::default());
+    static STATS: RefCell<Stats> = RefCell::new(Stats::default());
 }
 
 macro_rules! await_ready {
@@ -61,7 +59,7 @@ pub(crate) fn run<MS>(
     in_flight: usize,
     mut client: MS,
     prime: bool,
-) -> (f64, execution::Stats, execution::Stats, usize)
+) -> (std::time::SystemTime, f64, execution::Stats, usize)
 where
     MS: MakeService<bool, TrawlerRequest>,
     MS::MakeError: std::fmt::Debug,
@@ -81,39 +79,24 @@ where
         "one generator thread cannot generate that much load"
     );
 
-    let warmup = load.warmup;
     let runtime = load.runtime;
 
-    let rmt_stats: Arc<Mutex<Stats>> = Arc::default();
-    let sjrn_stats: Arc<Mutex<Stats>> = Arc::default();
+    let stats: Arc<Mutex<Stats>> = Arc::default();
     let mut rt = {
-        let rmt_stats = rmt_stats.clone();
-        let sjrn_stats = sjrn_stats.clone();
+        let stats = stats.clone();
         tokio::runtime::Builder::new()
             .enable_all()
             .threaded_scheduler()
             .on_thread_stop(move || {
-                let _ = RMT_STATS.with(|my_stats| {
-                    let mut stats = rmt_stats.lock().unwrap();
+                STATS.with(|my_stats| {
+                    let mut stats = stats.lock().unwrap();
                     for (rtype, my_h) in my_stats.borrow_mut().drain() {
                         use std::collections::hash_map::Entry;
                         match stats.entry(rtype) {
                             Entry::Vacant(v) => {
                                 v.insert(my_h);
                             }
-                            Entry::Occupied(mut h) => h.get_mut().add(&my_h).unwrap(),
-                        }
-                    }
-                });
-                let _ = SJRN_STATS.with(|my_stats| {
-                    let mut stats = sjrn_stats.lock().unwrap();
-                    for (rtype, my_h) in my_stats.borrow_mut().drain() {
-                        use std::collections::hash_map::Entry;
-                        match stats.entry(rtype) {
-                            Entry::Vacant(v) => {
-                                v.insert(my_h);
-                            }
-                            Entry::Occupied(mut h) => h.get_mut().add(&my_h).unwrap(),
+                            Entry::Occupied(mut h) => h.get_mut().merge(&my_h),
                         }
                     }
                 });
@@ -219,9 +202,9 @@ where
         eprintln!("--> finished priming database in {:?}", start.elapsed());
     }
 
+    let start_t = time::SystemTime::now();
     let start = time::Instant::now();
-    let mut count_from = start + warmup;
-    let mut end = start + warmup + runtime;
+    let end = start + runtime;
 
     let nstories = sampler.nstories();
     let ncomments = sampler.ncomments();
@@ -232,13 +215,9 @@ where
     let mut rng = rand::thread_rng();
     let interarrival_ns = rand_distr::Exp::new(target * 1e-9).unwrap();
 
-    let mut waited_after_warmup = false;
     let mut next = time::Instant::now();
     while next < end {
-        let mut now = time::Instant::now();
-
-        // TODO: early exit at some point?
-
+        let now = time::Instant::now();
         if next > now || npending.load(atomic::Ordering::Acquire) > in_flight {
             if now > end {
                 // don't spin after we need to be done
@@ -246,23 +225,6 @@ where
             }
             atomic::spin_loop_hint();
             continue;
-        }
-        if !waited_after_warmup && next > count_from {
-            // we want to make sure we don't "pollute" the main run with time spent in warmup.
-            // for example,if warmup has built up a queue, we want that queue to drain before we
-            // start to measure runtime.
-            eprintln!("--> warmup finished; flushing queues @ {:?}", now);
-            while npending.load(atomic::Ordering::Acquire) != 0 {
-                std::thread::yield_now();
-            }
-            let waited = now.elapsed();
-            count_from += waited;
-            end += waited;
-
-            waited_after_warmup = true;
-            now = time::Instant::now();
-            next = now;
-            eprintln!("--> queues flushed after warmup in {:?}", waited);
         }
 
         // randomly pick next request type based on relative frequency
@@ -333,9 +295,7 @@ where
         };
 
         _nissued += 1;
-        if now > count_from {
-            ops += 1;
-        }
+        ops += 1;
 
         let issued = next;
         let rtype = mem::discriminant(&req);
@@ -351,58 +311,42 @@ where
         npending.fetch_add(1, atomic::Ordering::AcqRel);
         rt.spawn(async move {
             let _ = issued.elapsed();
-            let start = time::Instant::now();
+            let sent = time::Instant::now();
             let r = fut.await;
-            let rmt_time = start.elapsed();
+            let rmt_time = sent.elapsed();
             let sjrn_time = issued.elapsed();
             npending.fetch_sub(1, atomic::Ordering::AcqRel);
 
             r.unwrap();
-            if now <= count_from {
-                // in warmup -- do nothing
-                return;
-            }
-            RMT_STATS.with(|stats| {
-                stats
-                    .borrow_mut()
+            STATS.with(|stats| {
+                let mut stats = stats.borrow_mut();
+                let hist = stats
                     .entry(rtype)
-                    .or_insert_with(|| Histogram::<u64>::new_with_bounds(1, 60_000_000, 3).unwrap())
-                    .saturating_record(rmt_time.as_micros() as u64);
-            });
-            SJRN_STATS.with(|stats| {
-                stats
-                    .borrow_mut()
-                    .entry(rtype)
-                    .or_insert_with(|| Histogram::<u64>::new_with_bounds(1, 60_000_000, 3).unwrap())
-                    .saturating_record(sjrn_time.as_micros() as u64);
+                    .or_insert_with(crate::timing::Timeline::default)
+                    .histogram_for(issued.duration_since(start));
+
+                hist.processing(rmt_time.as_micros() as u64);
+                hist.sojourn(sjrn_time.as_micros() as u64);
             });
         });
 
         // schedule next delivery
         next += time::Duration::from_nanos(interarrival_ns.sample(&mut rng) as u64);
     }
+    let took = start.elapsed();
 
     rt.block_on(client.shutdown());
     drop(rt);
+
     let unfinished = npending.load(atomic::Ordering::Acquire);
     ops -= unfinished;
-
-    let mut per_second = 0.0;
-    let now = time::Instant::now();
-    if now > count_from {
-        let took = now.duration_since(count_from);
-        if took != time::Duration::new(0, 0) {
-            per_second = ops as f64 / took.as_secs_f64()
-        }
-    }
+    let per_second = ops as f64 / took.as_secs_f64();
 
     // gather stats
-    let mut rmt_stats = rmt_stats.lock().unwrap();
-    let mut sjrn_stats = sjrn_stats.lock().unwrap();
-    (
-        per_second,
-        std::mem::replace(&mut *rmt_stats, Default::default()),
-        std::mem::replace(&mut *sjrn_stats, Default::default()),
-        0,
-    )
+    let mut stats = stats.lock().unwrap();
+    for hs in stats.values_mut() {
+        hs.set_total_duration(took);
+    }
+
+    (start_t, per_second, std::mem::take(&mut *stats), 0)
 }

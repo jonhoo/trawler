@@ -1,12 +1,11 @@
 use crate::LobstersRequest;
 use crate::{COMMENTS_PER_STORY, VOTES_PER_COMMENT, VOTES_PER_STORY, VOTES_PER_USER};
-use hdrhistogram::Histogram;
 use histogram_sampler;
 use rand::distributions::Distribution;
 use std::collections::HashMap;
 use std::{mem, time};
 
-type Stats = HashMap<mem::Discriminant<LobstersRequest>, Histogram<u64>>;
+type Stats = HashMap<mem::Discriminant<LobstersRequest>, crate::timing::Timeline>;
 
 #[derive(Clone, Debug)]
 struct Sampler {
@@ -144,7 +143,6 @@ fn id_to_slug(mut id: u32) -> [u8; 6] {
 #[derive(Clone, Debug)]
 pub(crate) struct Workload {
     pub(crate) scale: f64,
-    pub(crate) warmup: time::Duration,
     pub(crate) runtime: time::Duration,
 }
 
