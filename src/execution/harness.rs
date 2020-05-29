@@ -240,6 +240,10 @@ where
         // TODO: early exit at some point?
 
         if next > now || npending.load(atomic::Ordering::Acquire) > in_flight {
+            if now > end {
+                // don't spin after we need to be done
+                break;
+            }
             atomic::spin_loop_hint();
             continue;
         }
