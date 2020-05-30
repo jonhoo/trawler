@@ -136,7 +136,11 @@ impl<'a> WorkloadBuilder<'a> {
                         .begin_log_with(&mut f, &mut s)
                         .unwrap();
                     for variant in LobstersRequest::all() {
-                        timing[&variant].write(&mut w).unwrap();
+                        if let Some(t) = timing.get(&variant) {
+                            t.write(&mut w).unwrap();
+                        } else {
+                            timing::Timeline::default().write(&mut w).unwrap();
+                        }
                     }
                 }
                 Err(e) => {
