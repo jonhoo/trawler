@@ -84,18 +84,7 @@ impl Timeline {
         Ok(())
     }
 
-    pub fn collapse(&self) -> (Histogram<u64>, Histogram<u64>) {
-        let mut hists = self.histograms.iter();
-        if let Some(hs) = hists.next() {
-            let mut proc = hs.processing.clone();
-            let mut sjrn = hs.sojourn.clone();
-            for hs in hists {
-                proc.add(&hs.processing).expect("same bounds");
-                sjrn.add(&hs.sojourn).expect("same bounds");
-            }
-            (proc, sjrn)
-        } else {
-            (Histogram::new(1).unwrap(), Histogram::new(1).unwrap())
-        }
+    pub fn last(&self) -> Option<(&Histogram<u64>, &Histogram<u64>)> {
+        self.histograms.last().map(|h| (&h.processing, &h.sojourn))
     }
 }
