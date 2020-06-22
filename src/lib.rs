@@ -151,8 +151,7 @@ impl<'a> WorkloadBuilder<'a> {
 
         println!("{:<12}\t{:<12}\tpct\tµs", "# op", "metric");
         for variant in LobstersRequest::all() {
-            if let Some(h) = timing.get(&variant) {
-                let (proc_hist, sjrn_hist) = h.last().unwrap();
+            if let Some((proc_hist, sjrn_hist)) = timing.get(&variant).and_then(|h| h.last()) {
                 for (metric, h) in &[("processing", proc_hist), ("sojourn", sjrn_hist)] {
                     if h.max() == 0 {
                         continue;
