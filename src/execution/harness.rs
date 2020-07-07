@@ -333,12 +333,12 @@ where
         // schedule next delivery
         next += time::Duration::from_nanos(interarrival_ns.sample(&mut rng) as u64);
     }
+    let unfinished = npending.load(atomic::Ordering::Acquire);
     let took = start.elapsed();
 
     rt.block_on(client.shutdown());
     drop(rt);
 
-    let unfinished = npending.load(atomic::Ordering::Acquire);
     ops -= unfinished;
     let per_second = ops as f64 / took.as_secs_f64();
 
