@@ -82,11 +82,10 @@ where
     let runtime = load.runtime;
 
     let stats: Arc<Mutex<Stats>> = Arc::default();
-    let mut rt = {
+    let rt = {
         let stats = stats.clone();
-        tokio::runtime::Builder::new()
+        tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .threaded_scheduler()
             .on_thread_stop(move || {
                 STATS.with(|my_stats| {
                     let mut stats = stats.lock().unwrap();
@@ -171,7 +170,7 @@ where
                 let generated_comments_per_story = generated_comments / nstories;
                 // pick the nth comment to chosen story
                 if generated_comments_per_story != 0 {
-                    let story_comment = rng.gen_range(0, generated_comments_per_story);
+                    let story_comment = rng.gen_range(0..generated_comments_per_story);
                     Some(story + nstories * story_comment)
                 } else {
                     None
@@ -223,12 +222,12 @@ where
                 // don't spin after we need to be done
                 break;
             }
-            atomic::spin_loop_hint();
+            std::hint::spin_loop();
             continue;
         }
 
         // randomly pick next request type based on relative frequency
-        let mut seed: isize = rng.gen_range(0, 100000);
+        let mut seed: isize = rng.gen_range(0..100000);
         let seed = &mut seed;
         let mut pick = |f| {
             let applies = *seed <= f;
@@ -260,7 +259,7 @@ where
         } else if pick(316) {
             // comments without a parent
             LobstersRequest::Comment {
-                id: id_to_slug(rng.gen_range(ncomments, MAX_SLUGGABLE_ID)),
+                id: id_to_slug(rng.gen_range(ncomments..MAX_SLUGGABLE_ID)),
                 story: id_to_slug(sampler.story_for_comment(&mut rng)),
                 parent: None,
             }
@@ -268,12 +267,12 @@ where
             LobstersRequest::Login
         } else if pick(71) {
             // comments with a parent
-            let id = rng.gen_range(ncomments, MAX_SLUGGABLE_ID);
+            let id = rng.gen_range(ncomments..MAX_SLUGGABLE_ID);
             let story = sampler.story_for_comment(&mut rng);
             // we need to pick a comment that's on the chosen story
             // we know that every nth comment from prepopulation is to the same story
             let comments_per_story = ncomments / nstories;
-            let parent = story + nstories * rng.gen_range(0, comments_per_story);
+            let parent = story + nstories * rng.gen_range(0..comments_per_story);
             LobstersRequest::Comment {
                 id: id_to_slug(id),
                 story: id_to_slug(story),
@@ -282,7 +281,7 @@ where
         } else if pick(54) {
             LobstersRequest::CommentVote(id_to_slug(sampler.comment_for_vote(&mut rng)), Vote::Down)
         } else if pick(53) {
-            let id = rng.gen_range(nstories, MAX_SLUGGABLE_ID);
+            let id = rng.gen_range(nstories..MAX_SLUGGABLE_ID);
             LobstersRequest::Submit {
                 id: id_to_slug(id),
                 title: format!("benchmark {}", id),
